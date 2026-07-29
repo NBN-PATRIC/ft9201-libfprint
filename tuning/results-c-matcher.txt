@@ -1,0 +1,50 @@
+matcher em C -- 10 frames de frames/
+janela 36x36, rotacao +-45deg passo 3, portao 0.45, anti-dup 0.75
+
+qualidade por frame:
+  frame01.pgm    q= 1.41  105deg
+  frame02.pgm    q= 1.31   90deg
+  frame03.pgm    q= 1.34  150deg
+  frame04.pgm    q= 1.32  165deg
+  frame05.pgm    q= 1.33   45deg
+  frame06.pgm    q= 1.47   90deg
+  frame07.pgm    q= 1.57    0deg
+  frame08.pgm    q= 1.04    0deg
+  frame09.pgm    q= 1.12   15deg
+  frame10.pgm    q= 1.56   45deg
+
+== LEAVE-ONE-OUT ==
+retido          N subtpl   melhor NCC
+---------------------------------------
+frame01.pgm            6        0.508
+frame02.pgm            7        0.791
+frame03.pgm            7        0.762
+frame04.pgm            6        0.532
+frame05.pgm            6        0.496
+frame06.pgm            7        0.868
+frame07.pgm            6        0.624
+frame08.pgm            7        0.784
+frame09.pgm            6        0.516
+frame10.pgm            8        0.851
+---------------------------------------
+genuino: media 0.673  min 0.496  max 0.868
+
+cadastro completo: 7 subtemplates
+  frame07.pgm frame10.pgm frame01.pgm frame03.pgm frame05.pgm frame04.pgm frame09.pgm 
+
+== IMPOSTORES: 36 sondas de control/ ==
+  media 0.258  max 0.457
+
+  limiar   aceita genuino   aceita impostor
+--------------------------------------------
+    0.30             100%               56%
+    0.35             100%               22%
+    0.40             100%                8%
+    0.45             100%                3%
+    0.50              90%                0%
+    0.55              60%                0%
+    0.60              60%                0%
+    0.65              50%                0%
+    0.70              50%                0%
+
+limiar em uso no header (FT_THRESHOLD) = 0.50

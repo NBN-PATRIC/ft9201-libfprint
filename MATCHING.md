@@ -152,6 +152,51 @@ each touch as it happens and tells the operator to press harder rather than lett
 whole session turn out unusable. Its gate is set at 0.45, measured to reject exactly
 the three frames the diagnostics called blurred and none of the useful ones.
 
+## The matcher in C
+
+`driver/ft9201-match.c` + `.h` is the implementation the driver will use. No new
+dependency: the correlation is direct rather than FFT-based, because a 36×36 template
+over ~560 positions × 31 angles × 9 subtemplates is roughly 200 M operations — a
+fraction of a second, and libfprint does not have to grow an fftw dependency for it.
+
+`tuning/match-ctest.c` reproduces the Python evaluation with it. Per-frame ridge
+quality comes out **identical** to the reference (1.57, 1.56, 1.47, 1.41, 1.34, 1.33,
+1.32, 1.31, 1.12, 1.04), and with the Python switched to the same interpolation the
+leave-one-out scores agree to three decimals on 8 of 10 frames, with an identical
+subtemplate count on all ten:
+
+| frame | Python (bilinear) | C |
+|---|---|---|
+| 02 | 0.791 | 0.791 |
+| 03 | 0.762 | 0.762 |
+| 06 | 0.868 | 0.868 |
+| 08 | 0.784 | 0.784 |
+| 10 | 0.850 | 0.851 |
+| 05 | 0.535 | 0.496 |
+| 09 | 0.645 | 0.516 |
+
+The two outliers are a real residual difference, not noise: the C valid-pixel mask is
+more conservative at the rotated border and rejects positions PIL accepts, so a
+near-tie flips. It matters — frame 5 lands at 0.496, just under the 0.50 threshold —
+so the operating point below is measured on the C implementation rather than
+inherited from the Python one.
+
+C uses bilinear interpolation where the reference used bicubic. That choice is
+deliberate (it avoids carrying a 4-tap filter into the driver) but it is not free:
+bilinear smooths, smoothing raises correlation, and before the interpolations were
+matched the C scores read ~0.06 high across the board.
+
+| threshold | genuine accepted | impostor accepted |
+|---|---|---|
+| 0.40 | 100% | 8% |
+| 0.45 | 100% | 3% |
+| **0.50** | **90%** | **0%** |
+| 0.55 | 60% | 0% |
+
+`FT_THRESHOLD` is set to 0.50 and marked provisional in the header, for the reasons
+in the limits section above: 36 impostor samples from *other sensors* cannot fix an
+operating point for real use.
+
 ## Implementation sketch
 
 Not yet written. Recorded so the design is not re-derived later.
