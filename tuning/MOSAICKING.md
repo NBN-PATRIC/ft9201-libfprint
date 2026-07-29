@@ -117,11 +117,43 @@ Band-pass filtering to the ridge band (difference of Gaussians, σ 1.2/5.0) befo
 correlating was the obvious fix and **did not work** — mean composite quality
 0.42 either way, against 0.42 for raw pixels and 1.10 for the input frames.
 
-A likely reason the search has nothing to lock onto: these ten frames come from
-*separate presses*, so they differ by rotation as well as translation, and the
-alignment is translation-only. Frames from within a single press would align, but
-they also overlap almost completely and so add no new area — which is the real
-tension any mosaicking scheme here has to resolve.
+## The missing piece is rotation, and it is not enough on its own
+
+The reason the search has nothing to lock onto shows up directly in the measured
+ridge *directions*: 0°, 45°, 90°, 105° across the usable frames. Ridge flow on a
+finger does not turn 105° over 3–4 mm, so that spread is the finger being **rotated
+between presses**. Translation-only alignment cannot register rotated frames, which
+is why correlation had no peak to find.
+
+Rotating each frame to the anchor's orientation confirms it. The directions
+converge, and per-frame quality *improves* (the crop that removes the rotation's
+black border also removes edge artifacts):
+
+| frame | direction | rotation | quality before | after |
+|---|---|---|---|---|
+| 7 | 0° | +0° | 1.24 | **1.42** |
+| 5 | 45° | −45° | 1.22 | 1.25 |
+| 1 | 105° | −105° | 0.95 | 1.00 |
+| 6 | 45° | −45° | 0.77 | **1.44** |
+| 2 | 90° | −90° | 0.71 | 0.97 |
+
+With rotation applied, quality-driven translation alignment then finds offsets whose
+*overlap* scores 1.25–1.46 — a real peak at last, against the 0.10–0.17 correlations
+it replaced. But the assembled mosaic still measures **0.50 against 1.21 for its
+inputs**, and the offsets collapse toward zero (1.64× area), i.e. the frames stack
+rather than extend.
+
+Refining the orientation estimate from 15° to 5° steps changes the estimates by at
+most 5°, so angular quantisation is not the remaining error. What is left is that a
+residual few-degree, few-pixel misregistration is a large fraction of a 10 px ridge
+period, and averaging five frames compounds it. Getting past this needs proper rigid
+registration — sub-degree and sub-pixel — of low-contrast 64×80 partials, which is a
+research problem rather than a tuning exercise.
+
+There is also a structural tension worth stating plainly: frames from *within* one
+press register easily but overlap almost completely, so they add no area; frames
+across presses add area but need the full rigid registration above. Any working
+scheme has to resolve that trade-off.
 
 ## Where this leaves minutiae matching
 
@@ -137,20 +169,32 @@ correlation/pattern matching rather than NBIS-style minutiae extraction.
 
 ## Status
 
-Mosaicking is **not disproven — it is blocked on alignment**, and the alignment is
-measurably broken (up to 66 px off, choosing offsets with 0.10 correlation). Fixing
-it is the open path, and the ridge-quality metric above gives an objective target
-to tune against, which raw correlation did not.
+Mosaicking is **not disproven, but it is a good deal further from working than the
+retracted revision implied.** Three of the four problems are now identified with
+measurements rather than guesses — the enlargement constant, the alignment metric,
+and the missing rotation — and each has a clear fix. The fourth, registering rotated
+low-contrast partials accurately enough that averaging five of them does not cancel
+the ridges, is open and is the hard one.
+
+Separately, and independent of any of this, there is a ceiling worth weighing before
+investing further: on the frames measured to be *sharp*, NBIS extracts at best 3
+minutiae and never matches, across all 90 parameter combinations. A 3.2 × 4.1 mm
+window is simply small for minutiae-based matching. Even a perfect mosaic has to
+clear that bar afterwards. The vendor driver matching successfully on these same
+frames is the strongest hint that correlation/pattern matching — not NBIS — is the
+approach that fits this sensor.
 
 What should change in the driver, none of which is done yet:
 
 1. Drop the 3× enlargement for composites, or scale it to the composite's size.
 2. Gate frames on ridge quality before merging instead of accepting all of them.
 3. Replace the alignment score, and require far more overlap than `MIN_OV` 600.
-4. Consider rotation, or restrict merging to frames within one press.
+4. Register rotation, not just translation — and to sub-degree accuracy.
 
-Until then the driver's mosaicking path should be treated as experimental and not
-as a working matching solution.
+Until then the driver's mosaicking path should be treated as experimental and not as
+a working matching solution. The driver remains useful for **capture**: the protocol
+work in `../PROTOCOL.md` stands, and image acquisition is verified good (real images,
+ridges resolved at an 8–12 px period, quality up to 1.24).
 
 ## Reproducing
 
