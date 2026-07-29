@@ -24,3 +24,31 @@ Accumulate frames while the finger is down, mosaic them, and report a
 single composite image to libfprint instead of one raw 64x80 frame.
 Needs roughly 10+ frames per composite, so the capture loop has to keep
 reading during a press rather than returning after the first frame.
+
+## Validating the C port
+
+`mosaic-ctest.c` runs the driver's exact algorithm and constants over the same
+PGM frames, so the port could be checked before spending finger taps on
+hardware:
+
+| implementation | frames merged | area | minutiae |
+|---|---|---|---|
+| Python, greedy order | 10 | 4.86x | **41** |
+| C, capture order | 8 | 4.81x | **25** |
+
+Both produce a valid composite of essentially the same size. The gap is
+ordering: the Python version picks whichever remaining frame correlates best
+with the composite so far, while the driver necessarily merges in the order
+frames arrive, and an early poorly-matched frame drags the running mean.
+
+The driver should land closer to the Python figure than this test suggests: its
+loop counts *merged* frames, not read ones, so it keeps reading until
+FT9201_BURST_FRAMES have actually been merged, whereas this test had only ten
+frames on disk and stopped with eight.
+
+Build:
+
+```bash
+gcc -O2 -o mosaic-ctest mosaic-ctest.c -lm
+./mosaic-ctest ./frames out.pgm
+```
