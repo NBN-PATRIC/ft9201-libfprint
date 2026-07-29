@@ -1,0 +1,6 @@
+# Never commit biometric data: a fingerprint cannot be rotated like a password.
+*.png
+*.pgm
+*.raw
+*.bin
+build/

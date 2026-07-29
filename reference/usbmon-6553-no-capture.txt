@@ -1,0 +1,40 @@
+# Captura USB — enroll no 2808:6553 (FT9365 ESS) via focaltech_moc
+# libfprint master 1.94.100 · Kali · 2026-07-29 00:51-00:53
+# Janela de 120s com o usuário tocando o sensor repetidamente.
+
+## Comandos enviados (bulk OUT, Bo:3:002:1)
+   2250 02000280 0280
+      2 02000282 78f8
+      1 020001a5 a4
+
+## Respostas do chip (bulk IN, Bi:3:002:2)
+   2249 02000204 000600
+      2 02000104 0500
+      1 02000204 0b0d00
+
+## Conclusão
+O chip respondeu 2249x o MESMO payload (02000204 000600) ao poll 02000280 0280.
+Nenhuma variação durante 120s de toques => o 6553 nao possui sensor acoplado.
+Enroll trava em MOC_IDENTIFY esperando dedo que nunca chega.
+
+## Amostra crua (primeiras trocas, com handshake inicial)
+ffff8c0e530f7d80 1991550216 S Bo:3:002:1 -115 5 = 020001a5 a4
+ffff8c0e530f7d80 1991550325 C Bo:3:002:1 0 5 >
+ffff8c0e530f7d80 1991550653 S Bi:3:002:2 -115 7 <
+ffff8c0e530f7d80 1991556255 C Bi:3:002:2 0 7 = 02000204 0b0d00
+ffff8c0f93e1e480 1991556726 S Bo:3:002:1 -115 6 = 02000282 78f8
+ffff8c0f93e1e480 1991556862 C Bo:3:002:1 0 6 >
+ffff8c0f93e1ecc0 1991557036 S Bi:3:002:2 -115 6 <
+ffff8c0f93e1ecc0 1991558547 C Bi:3:002:2 0 6 = 02000104 0500
+ffff8c0ec0348000 1991564432 S Bo:3:002:1 -115 6 = 02000282 78f8
+ffff8c0ec0348000 1991564478 C Bo:3:002:1 0 6 >
+ffff8c0ec0348840 1991564766 S Bi:3:002:2 -115 6 <
+ffff8c0ec0348840 1991566381 C Bi:3:002:2 0 6 = 02000104 0500
+ffff8c0ec03483c0 1991566749 S Bo:3:002:1 -115 6 = 02000280 0280
+ffff8c0ec03483c0 1991566790 C Bo:3:002:1 0 6 >
+ffff8c0ec0348540 1991566969 S Bi:3:002:2 -115 7 <
+ffff8c0ec0348540 1991568732 C Bi:3:002:2 0 7 = 02000204 000600
+ffff8c0ec0348a80 1991619855 S Bo:3:002:1 -115 6 = 02000280 0280
+ffff8c0ec0348a80 1991619939 C Bo:3:002:1 0 6 >
+ffff8c0ec0348a80 1991620583 S Bi:3:002:2 -115 7 <
+ffff8c0ec0348a80 1991621817 C Bi:3:002:2 0 7 = 02000204 000600

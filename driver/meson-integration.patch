@@ -1,0 +1,22 @@
+Integração do driver na árvore da libfprint (master 1.94.100):
+
+--- a/meson.build
++++ b/meson.build
+@@ drivers_info = {
+     'nb1010': {},
++    'ft9201': {},
+
+--- a/libfprint/meson.build
++++ b/libfprint/meson.build
+@@ driver_sources = {
+     'nb1010' : files('drivers/nb1010.c'),
++    'ft9201' : files('drivers/ft9201.c'),
+
+Compilar:
+  meson setup build --prefix=/usr -Ddrivers=all -Ddoc=false \
+        -Dgtk-examples=false -Dintrospection=false -Dinstalled-tests=false
+  meson compile -C build
+
+Testar sem substituir a libfprint do sistema:
+  sudo systemctl stop fprintd
+  sudo LD_LIBRARY_PATH=<build>/libfprint G_MESSAGES_DEBUG=all /usr/libexec/fprintd
