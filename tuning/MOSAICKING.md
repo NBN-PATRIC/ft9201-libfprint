@@ -52,3 +52,23 @@ Build:
 gcc -O2 -o mosaic-ctest mosaic-ctest.c -lm
 ./mosaic-ctest ./frames out.pgm
 ```
+
+## Merge order matters, and the driver now buffers for it
+
+Merging in arrival order costs about ten minutiae, because one early poorly
+matched frame drags the running mean that later frames are correlated against.
+`mosaic-ctest-greedy.c` is the same C code with the frames buffered first and
+each round taking whichever remaining frame correlates best:
+
+| merge strategy | frames merged | area | minutiae |
+|---|---|---|---|
+| C, arrival order | 8 | 4.81x | 25 |
+| **C, greedy** | **10** | **4.89x** | **35** |
+| Python, greedy | 10 | 4.86x | 41 |
+
+Cost is not a problem: 0.29 s for a ten-frame greedy merge (~29 ms per frame)
+against 0.07 s for arrival order, so it runs inline in the driver without any
+risk to the event loop.
+
+The driver now buffers the whole burst (10 x 5120 B = 51 KB) and merges
+greedily once it is complete.
