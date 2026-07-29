@@ -15,7 +15,7 @@ it independently. **No proprietary code, blobs or binaries are included or redis
 | libfprint driver compiles cleanly (master 1.94.100) | ✅ |
 | Device recognised by `fprintd`, opens, detects finger | ✅ |
 | Image capture through the driver | ✅ |
-| Minutiae extraction | ✅ (needs 3× enlargement, see below) |
+| Minutiae extraction | ⚠️ 1–3 per frame, and they do not correspond between captures — see [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md) |
 | **Enrollment completes** | ✅ template stored under `/var/lib/fprint/<user>/ft9201/` |
 | **Verification matches** | ⚠️ **not yet** — returns `verify-no-match`; tuning needed |
 
@@ -120,7 +120,10 @@ when at least one minutia is found, while Bozorth needs a couple of dozen for a 
 Directions that look promising, given the data:
 
 1. **Multi-frame mosaicking** — stitch several captures into a larger image before detection. The
-   standard answer for small-area sensors, and it raises minutiae count by construction.
+   standard answer for small-area sensors. Implemented and measured; it raises the minutiae *count*
+   but the extra minutiae are seam artifacts that do not match between independent composites.
+   The cause is now isolated to the alignment metric, which lands up to 66 px off.
+   Full measurements and the remaining work in [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
 2. **A non-minutiae matcher** — the vendor driver works on these same frames, which suggests
    correlation/pattern matching rather than NBIS-style minutiae.
 3. **Ridge-level enhancement** (Gabor along local orientation) instead of global contrast ops.
