@@ -36,6 +36,8 @@
 
 #define FP_COMPONENT "ft9201"
 
+#include <math.h>
+
 #include "drivers_api.h"
 
 /* Sensor geometry. The AFE registers 0x14/0x15 carry width/height; this
@@ -80,6 +82,27 @@
  * seen again. */
 #define FT9201_REARM_EVERY     30
 
+/* Frames combined into one composite before handing an image to the core.
+ *
+ * A single 64x80 frame yields 1-3 minutiae, far below what Bozorth needs. Ten
+ * frames mosaicked into ~168x148 yield 41, comparable to the 47 that
+ * libfprint's own reference captures produce. Measured offline; see
+ * tuning/MOSAICKING.md in the project repository. */
+#define FT9201_BURST_FRAMES    10
+
+/* Search window and step for aligning a frame against the composite. */
+#define FT9201_ALIGN_RANGE     56
+#define FT9201_ALIGN_COARSE    4
+
+/* Minimum overlapping pixels and correlation for a frame to be merged. */
+#define FT9201_ALIGN_MIN_OV    600
+#define FT9201_ALIGN_MIN_CORR  0.30
+
+/* Composite canvas: one frame plus the search window on every side. */
+#define FT9201_PAD             (FT9201_ALIGN_RANGE + 8)
+#define FT9201_CANVAS_W        (FT9201_IMG_WIDTH + 2 * FT9201_PAD)
+#define FT9201_CANVAS_H        (FT9201_IMG_HEIGHT + 2 * FT9201_PAD)
+
 struct _FpiDeviceFt9201
 {
   FpImageDevice        parent;
@@ -92,6 +115,13 @@ struct _FpiDeviceFt9201
   /* State requested by the FpImageDevice core through ->change_state(). The
    * capture SSM follows it instead of running a loop of its own. */
   FpiImageDeviceState  dev_state;
+
+  /* Composite built from a burst of frames. `sum` accumulates pixel values and
+   * `hits` how many frames contributed to each position, so the merge is a
+   * running mean over the overlaps. */
+  guint32             *sum;
+  guint16             *hits;
+  guint                frames_in_burst;
 };
 
 G_DECLARE_FINAL_TYPE (FpiDeviceFt9201, fpi_device_ft9201, FPI, DEVICE_FT9201, FpImageDevice)
@@ -138,6 +168,161 @@ ft9201_submit_ctrl_out (FpDevice *dev, FpiSsm *ssm, guint8 request, guint16 valu
 
   fpi_usb_transfer_submit (transfer, FT9201_CTRL_TIMEOUT, NULL,
                            fpi_ssm_usb_transfer_cb, NULL);
+}
+
+/* ------------------------------------------------------------------ mosaic */
+
+static void
+mosaic_reset (FpiDeviceFt9201 *self)
+{
+  memset (self->sum, 0, sizeof (guint32) * FT9201_CANVAS_W * FT9201_CANVAS_H);
+  memset (self->hits, 0, sizeof (guint16) * FT9201_CANVAS_W * FT9201_CANVAS_H);
+  self->frames_in_burst = 0;
+}
+
+static void
+mosaic_paste (FpiDeviceFt9201 *self, const guint8 *frame, gint dy, gint dx)
+{
+  for (gint y = 0; y < FT9201_IMG_HEIGHT; y++)
+    {
+      gint cy = y + dy;
+      if (cy < 0 || cy >= FT9201_CANVAS_H)
+        continue;
+      for (gint x = 0; x < FT9201_IMG_WIDTH; x++)
+        {
+          gint cx = x + dx;
+          if (cx < 0 || cx >= FT9201_CANVAS_W)
+            continue;
+          self->sum[cy * FT9201_CANVAS_W + cx] += frame[y * FT9201_IMG_WIDTH + x];
+          self->hits[cy * FT9201_CANVAS_W + cx]++;
+        }
+    }
+  self->frames_in_burst++;
+}
+
+/* Pearson correlation between the composite and `frame` placed at (dy,dx),
+ * computed only where the composite already has pixels. Returns -2 when the
+ * overlap is too small to mean anything. */
+static gdouble
+mosaic_corr (FpiDeviceFt9201 *self, const guint8 *frame, gint dy, gint dx)
+{
+  gdouble sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+  guint n = 0;
+
+  for (gint y = 0; y < FT9201_IMG_HEIGHT; y++)
+    {
+      gint cy = y + dy;
+      if (cy < 0 || cy >= FT9201_CANVAS_H)
+        continue;
+      for (gint x = 0; x < FT9201_IMG_WIDTH; x++)
+        {
+          gint cx = x + dx;
+          if (cx < 0 || cx >= FT9201_CANVAS_W)
+            continue;
+          guint idx = cy * FT9201_CANVAS_W + cx;
+          if (!self->hits[idx])
+            continue;
+          gdouble a = (gdouble) self->sum[idx] / self->hits[idx];
+          gdouble b = frame[y * FT9201_IMG_WIDTH + x];
+          sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
+          n++;
+        }
+    }
+
+  if (n < FT9201_ALIGN_MIN_OV)
+    return -2.0;
+
+  {
+    gdouble va = saa - sa * sa / n;
+    gdouble vb = sbb - sb * sb / n;
+    if (va < 1e-6 || vb < 1e-6)
+      return -2.0;
+    return (sab - sa * sb / n) / sqrt (va * vb);
+  }
+}
+
+/* Coarse sweep then a +/-COARSE refinement, mirroring the offline harness. */
+static gboolean
+mosaic_merge (FpiDeviceFt9201 *self, const guint8 *frame)
+{
+  gdouble best = -2.0;
+  gint by = FT9201_PAD, bx = FT9201_PAD;
+  gboolean found = FALSE;
+
+  if (self->frames_in_burst == 0)
+    {
+      mosaic_paste (self, frame, FT9201_PAD, FT9201_PAD);
+      return TRUE;
+    }
+
+  for (gint dy = FT9201_PAD - FT9201_ALIGN_RANGE; dy <= FT9201_PAD + FT9201_ALIGN_RANGE; dy += FT9201_ALIGN_COARSE)
+    for (gint dx = FT9201_PAD - FT9201_ALIGN_RANGE; dx <= FT9201_PAD + FT9201_ALIGN_RANGE; dx += FT9201_ALIGN_COARSE)
+      {
+        gdouble c = mosaic_corr (self, frame, dy, dx);
+        if (c > best) { best = c; by = dy; bx = dx; found = TRUE; }
+      }
+
+  if (!found)
+    return FALSE;
+
+  for (gint dy = by - FT9201_ALIGN_COARSE; dy <= by + FT9201_ALIGN_COARSE; dy++)
+    for (gint dx = bx - FT9201_ALIGN_COARSE; dx <= bx + FT9201_ALIGN_COARSE; dx++)
+      {
+        gdouble c = mosaic_corr (self, frame, dy, dx);
+        if (c > best) { best = c; by = dy; bx = dx; }
+      }
+
+  if (best < FT9201_ALIGN_MIN_CORR)
+    {
+      fp_dbg ("mosaic: frame rejected, best correlation %.2f", best);
+      return FALSE;
+    }
+
+  fp_dbg ("mosaic: merged at (%+d,%+d) corr=%.2f", by - FT9201_PAD, bx - FT9201_PAD, best);
+  mosaic_paste (self, frame, by, bx);
+  return TRUE;
+}
+
+/* Crops the composite to the covered region and returns it as an FpImage. */
+static FpImage *
+mosaic_finish (FpiDeviceFt9201 *self)
+{
+  gint y0 = FT9201_CANVAS_H, y1 = -1, x0 = FT9201_CANVAS_W, x1 = -1;
+  FpImage *img;
+  gint w, h;
+
+  for (gint y = 0; y < FT9201_CANVAS_H; y++)
+    for (gint x = 0; x < FT9201_CANVAS_W; x++)
+      if (self->hits[y * FT9201_CANVAS_W + x])
+        {
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+        }
+
+  if (y1 < y0 || x1 < x0)
+    return NULL;
+
+  w = x1 - x0 + 1;
+  h = y1 - y0 + 1;
+  /* pixman requires the stride to be a multiple of 4 */
+  w -= w % 4;
+  if (w <= 0 || h <= 0)
+    return NULL;
+
+  img = fp_image_new (w, h);
+  for (gint y = 0; y < h; y++)
+    for (gint x = 0; x < w; x++)
+      {
+        guint idx = (y + y0) * FT9201_CANVAS_W + (x + x0);
+        img->data[y * w + x] = self->hits[idx]
+                               ? (guint8) (self->sum[idx] / self->hits[idx])
+                               : 0;
+      }
+
+  fp_dbg ("mosaic: %dx%d from %u frames", w, h, self->frames_in_burst);
+  return img;
 }
 
 /* ------------------------------------------------------------ capture states */
@@ -210,7 +395,8 @@ presence_cb (FpiUsbTransfer *transfer, FpDevice *device,
 
   if (self->dev_state == FPI_IMAGE_DEVICE_STATE_CAPTURE)
     {
-      /* Core wants a frame now. */
+      /* Core wants an image: start a fresh burst and go read frames. */
+      mosaic_reset (self);
       fpi_ssm_next_state (transfer->ssm);
       return;
     }
@@ -240,6 +426,7 @@ static void
 image_cb (FpiUsbTransfer *transfer, FpDevice *device,
           gpointer user_data, GError *error)
 {
+  FpiDeviceFt9201 *self = FPI_DEVICE_FT9201 (device);
   FpImageDevice *imgdev = FP_IMAGE_DEVICE (device);
   g_autoptr(FpImage) raw = NULL;
   FpImage *img;
@@ -261,13 +448,29 @@ image_cb (FpiUsbTransfer *transfer, FpDevice *device,
       return;
     }
 
-  raw = fp_image_new (FT9201_IMG_WIDTH, FT9201_IMG_HEIGHT);
-  memcpy (raw->data, transfer->buffer, FT9201_IMG_SIZE);
+  /* Merge this frame into the composite. A rejected frame (finger moved too
+   * far, or too little overlap) is simply skipped. */
+  mosaic_merge (self, transfer->buffer);
 
-  /* 64x80 is far too small for NBIS: mindtct returns "no minutiae found" even
-   * on frames with clearly defined ridges. Enlarging the frame gives the
-   * detector the pixel density it assumes (~500 dpi), the same trick the
-   * egis0570/elanspi/aes3k drivers use for their small sensors. */
+  /* Keep reading until the burst is full, then hand over one composite. */
+  if (self->frames_in_burst < FT9201_BURST_FRAMES &&
+      self->dev_state == FPI_IMAGE_DEVICE_STATE_CAPTURE)
+    {
+      fpi_ssm_jump_to_state (transfer->ssm, CAPTURE_ARM_RESET);
+      return;
+    }
+
+  raw = mosaic_finish (self);
+  if (!raw)
+    {
+      fpi_ssm_mark_failed (transfer->ssm,
+                           fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+                                                     "empty composite"));
+      return;
+    }
+
+  /* Even mosaicked the frame is small for NBIS, so still enlarge before
+   * detection — the same trick egis0570/elanspi/aes3k use. */
   img = fpi_image_resize (raw, FT9201_ENLARGE, FT9201_ENLARGE);
 
   /* The sensor already returns ridges dark on a light background, which is what
@@ -452,13 +655,29 @@ static const FpIdEntry id_table[] = {
 static void
 fpi_device_ft9201_init (FpiDeviceFt9201 *self)
 {
+  self->sum = g_new0 (guint32, FT9201_CANVAS_W * FT9201_CANVAS_H);
+  self->hits = g_new0 (guint16, FT9201_CANVAS_W * FT9201_CANVAS_H);
+}
+
+static void
+fpi_device_ft9201_finalize (GObject *object)
+{
+  FpiDeviceFt9201 *self = FPI_DEVICE_FT9201 (object);
+
+  g_clear_pointer (&self->sum, g_free);
+  g_clear_pointer (&self->hits, g_free);
+
+  G_OBJECT_CLASS (fpi_device_ft9201_parent_class)->finalize (object);
 }
 
 static void
 fpi_device_ft9201_class_init (FpiDeviceFt9201Class *klass)
 {
+  GObjectClass *obj_class = G_OBJECT_CLASS (klass);
   FpDeviceClass *dev_class = FP_DEVICE_CLASS (klass);
   FpImageDeviceClass *img_class = FP_IMAGE_DEVICE_CLASS (klass);
+
+  obj_class->finalize = fpi_device_ft9201_finalize;
 
   dev_class->id = "ft9201";
   dev_class->full_name = "FocalTech FT9201";
