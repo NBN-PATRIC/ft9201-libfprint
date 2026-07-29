@@ -113,6 +113,45 @@ Stated plainly, because the numbers above are encouraging enough to be misread:
 So: the approach is *supported*, not *validated*. The next measurement that matters
 is a same-sensor impostor baseline.
 
+## The whole scheme, measured
+
+The table above is pairwise statistics. `tuning/subtpl.py` builds the actual system —
+enrollment selects subtemplates, verification scores a probe against all of them and
+accepts on the best — and measures it leave-one-out: for each frame, enrol from the
+other nine and verify with the held-out one.
+
+Enrollment does not keep the first N frames. It keeps those that pass a ridge-quality
+gate **and** are not near-duplicates (NCC ≥ 0.75) of one already stored, so the set
+spans the finger instead of piling up on one spot. On the reference frames it kept 9
+of 10, dropping one as a duplicate on its own.
+
+| | n | mean | min | max |
+|---|---|---|---|---|
+| genuine (leave-one-out) | 10 | **0.612** | 0.386 | 0.791 |
+| impostor vs full enrolment | 36 | 0.318 | — | 0.463 |
+
+| threshold | genuine accepted | impostor accepted |
+|---|---|---|
+| 0.40 | 90% | 8% |
+| 0.45 | 90% | 6% |
+| **0.50** | **90%** | **0%** |
+| 0.55 | 70% | 0% |
+
+So the scheme works on this data: **90% true accept at 0% false accept.** Note the
+impostor mean rises from 0.171 (pairwise) to 0.318 here, because an impostor probe
+now also gets best-of-9 — which is the honest way to measure it.
+
+Two things this does **not** show. The single genuine failure is a frame the
+quality measure had already flagged as blurred, so the tail is a capture-quality
+problem as much as a matcher problem. And 36 impostor samples support no claim
+stronger than FAR < 1/36; real use needs several orders of magnitude more, on
+same-sensor data.
+
+`tuning/capture-finger.py` exists to collect that data: it scores ridge quality on
+each touch as it happens and tells the operator to press harder rather than letting a
+whole session turn out unusable. Its gate is set at 0.45, measured to reject exactly
+the three frames the diagnostics called blurred and none of the useful ones.
+
 ## Implementation sketch
 
 Not yet written. Recorded so the design is not re-derived later.

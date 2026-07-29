@@ -1,0 +1,29 @@
+Matcher de subtemplates -- sistema completo, leave-one-out.
+Cadastro: portao de qualidade + descarte de quase-duplicatas, ate' 12 vistas.
+Verificacao: melhor NCC entre a sonda e qualquer subtemplate,
+busca de rotacao +-45deg, janela fixa 36x36.
+
+  genuino (leave-one-out): n=10  media 0.612  min 0.386  max 0.791
+  impostor:                n=36  media 0.318  max 0.463
+
+  limiar   aceita genuino   aceita impostor
+--------------------------------------------
+    0.30             100%               67%
+    0.35             100%               33%
+    0.40              90%                8%
+    0.45              90%                6%
+    0.50              90%                0%
+    0.55              70%                0%
+    0.60              50%                0%
+    0.65              30%                0%
+    0.70              30%                0%
+
+Melhor ponto nesta amostra: limiar 0.50 -> 90% genuino, 0% impostor.
+
+RESSALVAS
+ - impostores vem de OUTROS sensores; dois dedos no MESMO sensor
+   compartilham ruido de padrao fixo e pontuam mais alto entre si.
+ - 36 amostras impostoras so' permitem afirmar FAR < 1/36.
+   Uso real exige varias ordens de grandeza a mais.
+ - um dedo, dez frames. Suficiente para mostrar o efeito, nao para
+   fixar um ponto de operacao.
