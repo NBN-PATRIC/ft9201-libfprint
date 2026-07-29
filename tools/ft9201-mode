@@ -1,0 +1,122 @@
+#!/bin/bash
+# Alterna entre a libfprint do SISTEMA (a que autentica de verdade) e a build de
+# desenvolvimento com o driver aberto -- sem nunca deixar a maquina sem digital.
+#
+#   ft9201-mode status     mostra qual esta' ativa e se a autenticacao responde
+#   ft9201-mode dev        sobe um fprintd temporario com a build de dev
+#   ft9201-mode system     mata o de dev e devolve o do sistema (idempotente)
+#
+# Por que isso e' preciso: enquanto o matcher aberto esta' em desenvolvimento,
+# quem autentica o sudo e' a libfprint do sistema. Um experimento que pare o
+# fprintd e nao o devolva tranca o usuario para fora do proprio sudo. Este
+# script torna a volta um comando so', e o modo 'dev' se auto-restaura na saida.
+#
+# A build de dev nunca e' instalada por cima da do sistema: ela entra so' por
+# LD_LIBRARY_PATH, num processo separado. Os dois nao se misturam.
+set -u
+
+DEV_LIB="${FT9201_DEV_LIB:-$HOME/build/libfprint/build/libfprint}"
+FPRINTD="${FT9201_FPRINTD:-/usr/libexec/fprintd}"
+PIDFILE=/run/ft9201-dev-fprintd.pid
+LOG="${FT9201_DEV_LOG:-/tmp/ft9201-dev-fprintd.log}"
+
+die() { echo "erro: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "precisa de root: sudo $0 $*"; }
+
+dev_pid() {
+  [ -f "$PIDFILE" ] || return 1
+  local p; p=$(cat "$PIDFILE" 2>/dev/null)
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+  rm -f "$PIDFILE"; return 1
+}
+
+# Mata SO' o fprintd de dev, pelo PID. Nunca por padrao de linha de comando:
+# 'pkill -f' casa tambem com o shell que esta' rodando este script.
+stop_dev() {
+  local p
+  if p=$(dev_pid); then
+    kill "$p" 2>/dev/null
+    for _ in $(seq 1 20); do kill -0 "$p" 2>/dev/null || break; sleep 0.2; done
+    kill -9 "$p" 2>/dev/null
+    rm -f "$PIDFILE"
+    return 0
+  fi
+  return 1
+}
+
+auth_ok() {
+  # Existe device no barramento do sistema e ele responde?
+  timeout 8 gdbus call --system --dest net.reactivated.Fprint \
+    --object-path /net/reactivated/Fprint/Manager \
+    --method net.reactivated.Fprint.Manager.GetDevices >/dev/null 2>&1
+}
+
+cmd_status() {
+  local p
+  echo "libfprint do sistema:"
+  printf "  pacote: %s\n" "$(dpkg-query -W -f='${Version}' libfprint-2-2 2>/dev/null || echo '?')"
+  printf "  fprintd (systemd): %s\n" "$(systemctl is-active fprintd 2>/dev/null)"
+  echo "build de desenvolvimento:"
+  printf "  caminho: %s %s\n" "$DEV_LIB" \
+    "$([ -e "$DEV_LIB/libfprint-2.so.2" ] && echo '(presente)' || echo '(AUSENTE)')"
+  if p=$(dev_pid); then
+    printf "  \033[1mMODO DEV ATIVO\033[0m (pid %s) -- log: %s\n" "$p" "$LOG"
+    echo "  para devolver a autenticacao normal: sudo $0 system"
+  else
+    echo "  modo dev: parado"
+  fi
+  echo -n "autenticacao responde: "
+  if auth_ok; then echo "sim"; else echo "NAO"; fi
+  echo -n "digitais cadastradas: "
+  if [ "$(id -u)" -eq 0 ]; then
+    find /var/lib/fprint -mindepth 3 -type f 2>/dev/null | wc -l
+  else
+    echo "(rode como root para ver)"
+  fi
+}
+
+cmd_system() {
+  need_root system
+  if stop_dev; then echo "[i] fprintd de dev encerrado"; fi
+  # garante que nenhum fprintd orfao segure o device
+  systemctl stop fprintd 2>/dev/null
+  sleep 1
+  systemctl start fprintd 2>/dev/null
+  sleep 2
+  if auth_ok; then
+    echo "[ok] libfprint do sistema ativa; autenticacao respondendo"
+  else
+    echo "[!] o servico nao respondeu. tentando de novo..." >&2
+    systemctl restart fprintd 2>/dev/null; sleep 3
+    auth_ok && echo "[ok] respondendo agora" || {
+      echo "[!!] AINDA NAO RESPONDE. use senha para o sudo e investigue:" >&2
+      echo "     systemctl status fprintd; journalctl -u fprintd -n 40" >&2
+      exit 1; }
+  fi
+}
+
+cmd_dev() {
+  need_root dev
+  [ -e "$DEV_LIB/libfprint-2.so.2" ] || die "build de dev nao encontrada em $DEV_LIB"
+  if dev_pid >/dev/null; then echo "[i] modo dev ja' esta' ativo"; exit 0; fi
+  systemctl stop fprintd 2>/dev/null
+  sleep 2
+  LD_LIBRARY_PATH="$DEV_LIB" G_MESSAGES_DEBUG=all "$FPRINTD" > "$LOG" 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 4
+  if dev_pid >/dev/null && auth_ok; then
+    echo "[ok] modo dev ativo (pid $(cat $PIDFILE)); log em $LOG"
+    echo "     LEMBRE: 'sudo $0 system' devolve a autenticacao normal."
+  else
+    echo "[!] o fprintd de dev nao subiu; voltando ao do sistema" >&2
+    stop_dev; systemctl start fprintd 2>/dev/null
+    exit 1
+  fi
+}
+
+case "${1:-status}" in
+  status) cmd_status ;;
+  dev)    cmd_dev ;;
+  system) cmd_system ;;
+  *) echo "uso: $0 {status|dev|system}" >&2; exit 2 ;;
+esac

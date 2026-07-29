@@ -1,0 +1,18 @@
+NCC com janela fixa 36x36, banda da crista (DoG 1.0/4.0),
+busca de rotacao +-45deg passo 3 e translacao livre.
+
+conjunto        n   media    p05    p50    p95    max
+-----------------------------------------------------
+genuino        45   0.387  0.151  0.376  0.701  0.791
+impostor      360   0.171  0.095  0.229  0.347  0.463
+sintetico      10   0.226  0.160  0.223  0.299  0.308
+
+melhor-de-N com limiar no MAXIMO do impostor (0.463); P(par genuino passa) = 0.378
+  N=1   P(ao menos um casa) = 0.378
+  N=3   P(ao menos um casa) = 0.759
+  N=5   P(ao menos um casa) = 0.907
+  N=8   P(ao menos um casa) = 0.978
+  N=12  P(ao menos um casa) = 0.997
+
+RESSALVA: impostores vem de OUTROS sensores. Impostor do mesmo sensor
+compartilha ruido de padrao fixo e pontuaria mais alto. Numeros otimistas.
