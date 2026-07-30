@@ -1,0 +1,45 @@
+#!/bin/bash
+# Guarda para o PAM: a digital so' e' aceita na tela de bloqueio se a carteira
+# do KDE JA' estiver aberta.
+#
+# Por que: a carteira so' abre com a senha em texto claro, que o pam_fprintd
+# nao fornece (o pam_kwallet deriva a chave do PAM_AUTHTOK, que so' o pam_unix
+# preenche). Como esta maquina usa autologin, a carteira nasce FECHADA e so'
+# abre no primeiro desbloqueio. Se esse primeiro desbloqueio for por digital,
+# ela nunca abre -- e ai' o gate ~/.local/bin/start-after-secretservice.sh
+# estoura 300s e o OmniRoute sobe sem cripto, o Claude perde o cofre, e o
+# Chrome vaivem entre backends de senha.
+#
+# Medido nesta maquina: 118 bloqueios desde o boot e a carteira seguiu aberta,
+# com o kwalletd6 no mesmo PID -- bloquear a tela NAO fecha a carteira. Logo o
+# risco existe apenas no PRIMEIRO desbloqueio pos-boot, e e' exatamente esse
+# que este script manda pedir senha.
+#
+# Sai 0 (permite digital) so' quando a carteira esta' aberta.
+set -u
+
+u="${PAM_USER:-}"
+[ -n "$u" ] || exit 1
+
+uid=$(id -u "$u" 2>/dev/null) || exit 1
+bus="/run/user/$uid/bus"
+[ -S "$bus" ] || exit 1
+
+ask() {
+  gdbus call --session --dest org.kde.kwalletd6 \
+    --object-path /modules/kwalletd6 \
+    --method org.kde.KWallet.isOpen kdewallet 2>/dev/null
+}
+
+# Sob o PAM isto roda como root e precisa baixar para o usuario; rodando o
+# script a mao (para testar) ja' se e' o usuario e runuser recusaria.
+if [ "$(id -u)" -eq 0 ] && [ "$(id -u)" -ne "$uid" ]; then
+  out=$(runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+          gdbus call --session --dest org.kde.kwalletd6 \
+            --object-path /modules/kwalletd6 \
+            --method org.kde.KWallet.isOpen kdewallet 2>/dev/null)
+else
+  out=$(DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" ask)
+fi
+
+[ "$out" = "(true,)" ]

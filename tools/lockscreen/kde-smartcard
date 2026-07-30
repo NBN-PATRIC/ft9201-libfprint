@@ -1,0 +1,8 @@
+#%PAM-1.0
+#
+# Nao ha' smartcard nesta maquina. Sem este arquivo o servico kde-smartcard cai
+# no /etc/pam.d/other (senha!), o greeter acha que o metodo existe e o rotulo
+# da lockscreen mostra um "ou smartcard" fantasma. Negar aqui encerra a
+# conversa na hora e limpa o rotulo. O caminho da senha (servico "kde") nao
+# passa por este arquivo.
+auth    requisite       pam_deny.so

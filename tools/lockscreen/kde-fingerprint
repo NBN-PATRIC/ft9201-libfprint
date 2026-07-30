@@ -1,0 +1,56 @@
+#%PAM-1.0
+#
+# Digital na tela de bloqueio do KDE.
+#
+# Por que este arquivo precisa existir: o KDE ja' traz um kde-fingerprint em
+# /usr/lib/pam.d/, mas Debian/Kali NAO le' stacks de la' -- a PAM MiniPolicy
+# exige /etc/pam.d/, e o journal registra literalmente
+#   "PAM (kde-fingerprint) /usr/lib/pam.d is not supported on this system"
+# a cada tentativa. A digital nunca esteve desativada: estava inalcancavel por
+# caminho de arquivo, e a lockscreen caia no /etc/pam.d/other (senha).
+#
+# Baseado no kde-fingerprint que o KDE distribui, com duas mudancas:
+#
+#   1. o pam_kwallet5 saiu. Ele deriva a chave da carteira do PAM_AUTHTOK, que
+#      so' o pam_unix preenche; no caminho da digital nao ha' senha em texto
+#      claro e o modulo apenas registra "Couldn't get password (it is empty)".
+#      Manter a linha nao abre a carteira e so' polui o log.
+#
+#   2. entrou o guarda kwallet-aberta. Esta maquina usa autologin, entao a
+#      carteira nasce FECHADA e so' abre quando alguem digita a senha. Se o
+#      PRIMEIRO desbloqueio pos-boot fosse por digital, ela nunca abriria: o
+#      gate ~/.local/bin/start-after-secretservice.sh estouraria 300s e o
+#      OmniRoute subiria sem cripto, o app do Claude perderia o cofre e o
+#      Chrome ficaria no vaivem de backends que destroi as sessoes.
+#      Medido nesta maquina: 118 bloqueios desde o boot com a carteira sempre
+#      aberta e o kwalletd6 no mesmo PID -- bloquear a tela NAO fecha a
+#      carteira. Logo basta exigir senha UMA vez por boot.
+#
+# Rede de seguranca: este stack e' alternativo. O caminho da senha e' o servico
+# "kde", que continua caindo no /etc/pam.d/other e nao passa por aqui -- se
+# qualquer linha abaixo falhar, o KDE simplesmente nao oferece digital e a
+# senha segue funcionando.
+
+# Sem carteira aberta, sem digital. 'requisite' aborta na hora.
+auth    requisite       pam_exec.so quiet /usr/local/sbin/kwallet-aberta
+
+auth    requisite       pam_nologin.so
+auth    required        pam_succeed_if.so user != root quiet_success
+# timeout=-1 / max-tries=-1: digital SEMPRE ativa enquanto a tela estiver
+# bloqueada, como no Windows. Sem isso o pam_fprintd expira em 30s apos o
+# bloqueio: com Win+L (teste imediato) funciona, mas no bloqueio por tempo o
+# usuario volta minutos depois e a digital ja' morreu -- e o rotulo do greeter
+# degenera para um "ou smartcard" orfao. O greeter morre no desbloqueio, entao
+# a conversa infinita e' cancelada junto (mesmo desenho do gdm-fingerprint).
+auth    required        pam_fprintd.so timeout=-1 max-tries=-1
+
+@include common-account
+
+session [success=ok ignore=ignore module_unknown=ignore default=bad]        pam_selinux.so close
+session required        pam_loginuid.so
+session [success=ok ignore=ignore module_unknown=ignore default=bad]        pam_selinux.so open
+session optional        pam_keyinit.so force revoke
+session required        pam_limits.so
+session required        pam_env.so readenv=1
+session required        pam_env.so readenv=1 envfile=/etc/default/locale
+@include common-session
