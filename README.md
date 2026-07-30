@@ -78,10 +78,15 @@ Full details, including the capture sequence and finger-presence polling, in
 
 ```
 PROTOCOL.md                     protocol specification (verified)
+MATCHING.md                     why matching does not work here, measured
 reference/ft9201_read.py        independent reader — libusb via ctypes, no deps
 reference/usbmon-*.txt          USB captures backing the spec
 driver/ft9201.c                 libfprint FpImageDevice driver (LGPL-2.1+)
+driver/ft9201-match.{c,h}       correlation matcher — measured insufficient, kept for reference
 driver/meson-integration.patch  how to add it to the libfprint tree
+tools/ft9201-mode               switch system / dev / free, with a guaranteed way back
+tools/sessao/                   multi-finger capture sessions
+tuning/                         offline harnesses and the captured measurements
 ```
 
 ### Quick start — read an image without libfprint
@@ -131,31 +136,41 @@ carry almost nothing NBIS recognises as a minutia.
 Note that enrollment completing is *not* evidence matching will work — libfprint accepts a stage
 when at least one minutia is found, while Bozorth needs a couple of dozen for a usable score.
 
-Directions that look promising, given the data:
+Everything below has been measured. The list is kept as a record of what was tried, because
+each entry is a direction not worth repeating.
 
-1. **Multi-frame mosaicking** — stitch several captures into a larger image before detection. The
-   standard answer for small-area sensors. Implemented and measured; it raises the minutiae *count*
-   but the extra minutiae are seam artifacts that do not match between independent composites.
-   The cause is now isolated to the alignment metric, which lands up to 66 px off.
-   Full measurements and the remaining work in [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
-2. **A non-minutiae matcher** — the vendor library works on these same frames, and its strings
-   show it keeps multiple subtemplates per finger. Implemented as normalised cross-correlation
-   over subtemplates with a rotation search. It discriminates identity outright (d′ = 3.28,
-   complete separation against same-sensor impostors) **for a finger placed as it was at
-   enrolment**, and drops into the impostor range once rotated — roughly 25° between enrolled
-   views is already too wide a gap. Fixed-pattern removal, a ±90° rotation search, denser
-   enrolment, Gabor enhancement and larger scoring windows were each measured; none recovers it.
-   What is missing is rotation invariance in the representation itself.
-   See [`MATCHING.md`](MATCHING.md).
-3. **Match on chip** — the vendor library exposes a `focaltech:moc` driver alongside
-   `focaltech:algorithm`. If this chip can match on-chip, a host-side matcher is the wrong thing
-   to build and the driver only needs the command protocol, as `elanmoc` does upstream. Untested;
-   currently the most promising direction.
-4. **Ridge-level enhancement** (Gabor along local orientation) instead of global contrast ops.
+1. **Multi-frame mosaicking** — the standard answer for small-area sensors. It raises the
+   minutiae *count*, but the extra minutiae are seam artifacts: two independent composites of one
+   finger, 16 minutiae each, score **zero** against each other, and ridge quality drops from 1.10
+   in the inputs to 0.42 in the composite. Blocked on sub-degree rigid registration.
+   See [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
+2. **A non-minutiae matcher** — the vendor library works on these same frames and its strings show
+   it keeps multiple subtemplates per finger. Implemented as normalised cross-correlation over
+   subtemplates with a rotation search. It separates perfectly (d′ = 3.28) when the probe is
+   nearly pixel-identical to an enrolled view, and in **natural use** gives genuine 0.687 against
+   impostor 0.680 — **d′ = 0.06**. Measured ridge orientation across eleven casual touches spans
+   0°–165°, so on a window this small there is no typical presentation to enrol against.
+3. **Match on chip** — ruled out for this device. The system library's id table contains only
+   `93a9`, bound to the plain `focaltech` driver, with no `6553` entry: the companion chip is not
+   in the matching path, and `focaltech:moc` is for other models. The vendor matches on the host,
+   on exactly these frames.
+4. **Ridge-level enhancement** — Gabor along the local orientation field (coherence 0.77–0.87, so
+   the field is confident). d′ stays at 0.19–0.30 and goes negative in two variants: enhancement
+   makes every print look like clean parallel ridges, which at this scale makes different fingers
+   look *more* alike.
+5. **A rotation-invariant descriptor** (log-polar, Fourier-Mellin) — do not build one without
+   running the control first. Rotating a sample *synthetically* is recovered to **0.98** at every
+   angle from 0° to 90°: the rotation search already works. What defeats a physically rotated
+   finger is that a 3.2 × 4.1 mm window then sees a different patch of skin.
 
-Measured and flat, so probably not worth repeating: plain enlargement, global
-contrast/equalisation, polarity inversion, `ppmm` tweaks, and normalised cross-correlation on
-band-passed intensity.
+Measured and flat, so not worth repeating: plain enlargement beyond 2×, global
+contrast/equalisation, polarity inversion, `ppmm` tweaks, fixed-pattern-noise removal
+(d′ 0.14 → 0.24), widening the rotation search to ±90° (raises both distributions equally), and
+scoring windows from 24 to 48 px (d′ 0.04 → 0.14 → −0.17 — area is not the bottleneck).
+
+The sensor is not the limitation: the vendor library authenticates on this same hardware. Closing
+the gap means replicating a proprietary feature extractor, which is a research project rather
+than a tuning exercise. Full account and every number in [`MATCHING.md`](MATCHING.md).
 
 ## Related work
 

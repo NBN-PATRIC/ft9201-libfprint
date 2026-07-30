@@ -4,3 +4,7 @@
 *.raw
 *.bin
 build/
+
+# artefatos do Python
+__pycache__/
+*.pyc
