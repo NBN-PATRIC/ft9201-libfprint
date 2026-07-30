@@ -65,12 +65,14 @@ Full details, including the capture sequence and finger-presence polling, in
    `0x00` forever. Indistinguishable from a dead sensor.
 2. **Re-arm about once per second.** Detection goes quiet a few seconds after init — measured
    **1 transition in 4445 polls** without re-arming, **24** with it.
-3. **Enlarge before minutiae detection — but know what it costs.** At the native 64×80, NBIS
-   `mindtct` returns *"No minutiae found"* on every frame, even with clearly defined ridges
-   (σ ≈ 64, full dynamic range); `fpi_image_resize (img, 3, 3)` makes enrollment complete, as in
-   the `egis0570` / `elanspi` / `aes3k` drivers. The catch: the measured ridge period here is
-   8–12 px, already what NBIS expects natively, so 3× pushes it to ~30 px and detection degrades
-   on anything larger than a single frame. The real problem is image *size*, not resolution.
+3. **Enlarge before minutiae detection — by 2×, not 3×.** At the native 64×80, NBIS `mindtct`
+   returns *"No minutiae found"* on every frame, even with clearly defined ridges (σ ≈ 64, full
+   dynamic range): the image is too small for its block grid, the same problem `egis0570` /
+   `elanspi` / `aes3k` solve the same way. But the measured ridge period here is 8–14 px, already
+   what NBIS expects at ~500 dpi, so scaling too far moves the period out of the band it can
+   process. Measured over ten frames: **1× → 1.7 minutiae** on average (7/10 frames with any),
+   **2× → 2.9** (9/10), **3× → 1.0** (2/10). An earlier revision of this driver used 3×, picked
+   before the ridge period was known.
 
 ## Layout
 
