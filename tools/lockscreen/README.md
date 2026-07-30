@@ -75,3 +75,24 @@ keeps falling through to `/etc/pam.d/other` and never touches these files. Worst
 case of any mistake here is fingerprint not being offered. Rollback is deleting
 the two files. Test with a way back in (SSH, a TTY) before trusting it, as with
 any PAM change.
+
+## 5. Waking the display on fingerprint unlock (X11)
+
+One more thing Windows drivers do for you: the reader is **not an input device**.
+Mouse and keyboard wake the display because they generate input events; a PAM
+unlock generates none, so unlocking by finger with the display in DPMS off leaves
+the session unlocked *in the dark* — measured exactly that way here.
+
+`wake-screen-on-unlock` fixes it: kscreenlocker announces lock state on the
+session bus (`org.freedesktop.ScreenSaver.ActiveChanged`), and on unlock the
+watcher forces DPMS on. Install as a systemd user unit:
+
+```bash
+install -m0755 wake-screen-on-unlock ~/.local/bin/
+install -m0644 wake-screen-on-unlock.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now wake-screen-on-unlock.service
+```
+
+X11 only (`xset`); on Wayland KWin handles the wake itself and the watcher is
+harmlessly useless.

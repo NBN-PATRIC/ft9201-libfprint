@@ -1,0 +1,12 @@
+[Unit]
+Description=Liga a tela (DPMS) quando a sessao e desbloqueada
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/wake-screen-on-unlock
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

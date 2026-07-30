@@ -1,0 +1,26 @@
+#!/bin/bash
+# Liga a tela quando a sessao e' desbloqueada.
+#
+# Por que existe: o leitor de digital nao e' um dispositivo de entrada. Mouse e
+# teclado acordam a tela porque geram evento de input; o desbloqueio via PAM
+# (pam_fprintd) nao gera evento nenhum, entao destravar pelo dedo com a tela
+# apagada deixava a sessao aberta NO ESCURO -- medido nesta maquina em
+# 2026-07-30: digital destravou, tela so' acendeu ao apertar espaco.
+#
+# O kscreenlocker anuncia lock/unlock no D-Bus: ActiveChanged(true|false) em
+# org.freedesktop.ScreenSaver. No unlock (false), forcamos o DPMS a ligar.
+#
+# X11 apenas (xset). Se a sessao voltar a Wayland, o kwin cuida disso sozinho
+# e este vigia simplesmente nao acha o xset util -- inofensivo.
+set -u
+export DISPLAY="${DISPLAY:-:0}"
+
+stdbuf -oL gdbus monitor --session --dest org.freedesktop.ScreenSaver \
+    --object-path /ScreenSaver 2>/dev/null |
+while IFS= read -r line; do
+  case "$line" in
+    *ActiveChanged*false*)
+      xset dpms force on 2>/dev/null
+      ;;
+  esac
+done
