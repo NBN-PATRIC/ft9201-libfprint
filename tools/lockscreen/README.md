@@ -119,3 +119,46 @@ the old give-up behaviour if you want it.
 Note that apps launched by hand need no gate: by definition you launched them
 after unlocking. And Chromium started with `--password-store=basic` does not use
 the wallet at all.
+
+## 7. Do not D-Bus-activate the wallet daemon — this one bites hard
+
+A `gdbus call --dest org.kde.kwalletd6 …` **starts kwalletd6** if it is not
+already running. That is a side effect, and on an autologin machine it is a
+destructive one.
+
+`pam_kwallet5` hands the wallet key to kwalletd over a socket it creates when it
+starts the daemon itself. If something else has already brought kwalletd up over
+D-Bus, that socket does not exist, so the key has nowhere to go: `pam_kwallet5`
+runs `pam_sm_authenticate` and `pam_sm_setcred` perfectly happily, logs nothing
+alarming, and **the wallet still never opens**.
+
+Both the gate and the fingerprint guard query the wallet, so both were doing this
+at boot — before the first password unlock. Observed failure, and note how far the
+symptoms land from the cause:
+
+- wallet never opens, despite the user typing the correct password
+- every Secret Service consumer sits in the gate forever (with §6's indefinite
+  wait, *forever* is literal — measured at 7370 s before manual intervention)
+- the fingerprint guard sees a closed wallet and refuses fingerprint, so lock
+  screen unlock silently reverts to password-only
+- kwallet's own prompt keeps reappearing
+
+One stray `gdbus` call, four unrelated-looking symptoms.
+
+The fix is to ask `org.freedesktop.DBus.NameHasOwner` first, which answers
+**without activating anything**:
+
+```bash
+[ "$(gdbus call --session --dest org.freedesktop.DBus \
+      --object-path /org/freedesktop/DBus \
+      --method org.freedesktop.DBus.NameHasOwner org.kde.kwalletd6)" = "(true,)" ] \
+  || exit 1     # daemon not up on its own => wallet not open, and leave it alone
+```
+
+If the daemon is not running, the wallet is definitionally not open, so refusing
+costs nothing. Only query `isOpen` once someone else has legitimately started it.
+
+Under PAM the guard runs as root, so **both** calls must be made in the target
+user's bus context (`runuser` + `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus`).
+Checking `NameHasOwner` on root's own bus always says "no" and silently refuses
+every fingerprint unlock.

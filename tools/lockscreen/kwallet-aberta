@@ -2,20 +2,26 @@
 # Guarda para o PAM: a digital so' e' aceita na tela de bloqueio se a carteira
 # do KDE JA' estiver aberta.
 #
-# Por que: a carteira so' abre com a senha em texto claro, que o pam_fprintd
-# nao fornece (o pam_kwallet deriva a chave do PAM_AUTHTOK, que so' o pam_unix
+# Por que: a carteira so' abre com a senha em texto claro, que o pam_fprintd nao
+# fornece (o pam_kwallet deriva a chave do PAM_AUTHTOK, que so' o pam_unix
 # preenche). Como esta maquina usa autologin, a carteira nasce FECHADA e so'
 # abre no primeiro desbloqueio. Se esse primeiro desbloqueio for por digital,
-# ela nunca abre -- e ai' o gate ~/.local/bin/start-after-secretservice.sh
-# estoura 300s e o OmniRoute sobe sem cripto, o Claude perde o cofre, e o
-# Chrome vaivem entre backends de senha.
+# ela nunca abre -- e o gate start-after-secretservice.sh segura para sempre os
+# apps que dependem do Secret Service (OmniRoute, app do Claude).
 #
-# Medido nesta maquina: 118 bloqueios desde o boot e a carteira seguiu aberta,
-# com o kwalletd6 no mesmo PID -- bloquear a tela NAO fecha a carteira. Logo o
-# risco existe apenas no PRIMEIRO desbloqueio pos-boot, e e' exatamente esse
-# que este script manda pedir senha.
+# Medido: bloquear a tela NAO fecha a carteira (118 bloqueios num dia, mesmo PID
+# do kwalletd6). Logo isto so' morde uma vez por boot.
 #
-# Sai 0 (permite digital) so' quando a carteira esta' aberta.
+# CRITICO -- nao ativar o kwalletd6 por D-Bus.
+# 'gdbus call --dest org.kde.kwalletd6' ATIVA o servico se ele nao estiver de
+# pe'. Em 2026-07-30 isso quebrou o boot inteiro: no primeiro bloqueio este
+# guarda subia o kwalletd6 SEM o socket que o pam_kwallet usa para entregar a
+# chave; o usuario digitava a senha, o pam_kwallet5 rodava auth+setcred e nao
+# tinha por onde passar a chave, e a carteira nunca abria. Sem cofre, o app do
+# Claude ficava preso no gate e este guarda passava a recusar a digital para
+# sempre. NameHasOwner responde sem ativar nada.
+#
+# Sai 0 (permite digital) so' quando a carteira esta' comprovadamente aberta.
 set -u
 
 u="${PAM_USER:-}"
@@ -25,21 +31,23 @@ uid=$(id -u "$u" 2>/dev/null) || exit 1
 bus="/run/user/$uid/bus"
 [ -S "$bus" ] || exit 1
 
-ask() {
-  gdbus call --session --dest org.kde.kwalletd6 \
-    --object-path /modules/kwalletd6 \
-    --method org.kde.KWallet.isOpen kdewallet 2>/dev/null
+# Roda um gdbus SEMPRE no bus de sessao do usuario. Sob o PAM isto executa como
+# root e precisa baixar de privilegio; rodando a mao para testar, ja' se e' o
+# usuario e o runuser recusaria.
+no_bus_do_usuario() {
+  if [ "$(id -u)" -eq 0 ] && [ "$(id -u)" -ne "$uid" ]; then
+    runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" "$@" 2>/dev/null
+  else
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" "$@" 2>/dev/null
+  fi
 }
 
-# Sob o PAM isto roda como root e precisa baixar para o usuario; rodando o
-# script a mao (para testar) ja' se e' o usuario e runuser recusaria.
-if [ "$(id -u)" -eq 0 ] && [ "$(id -u)" -ne "$uid" ]; then
-  out=$(runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
-          gdbus call --session --dest org.kde.kwalletd6 \
-            --object-path /modules/kwalletd6 \
-            --method org.kde.KWallet.isOpen kdewallet 2>/dev/null)
-else
-  out=$(DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" ask)
-fi
+# 1) o daemon esta' de pe' por conta propria? (nao ativa)
+[ "$(no_bus_do_usuario gdbus call --session --dest org.freedesktop.DBus \
+      --object-path /org/freedesktop/DBus \
+      --method org.freedesktop.DBus.NameHasOwner org.kde.kwalletd6)" = "(true,)" ] || exit 1
 
-[ "$out" = "(true,)" ]
+# 2) so' entao perguntar se a carteira esta' aberta
+[ "$(no_bus_do_usuario gdbus call --session --dest org.kde.kwalletd6 \
+      --object-path /modules/kwalletd6 \
+      --method org.kde.KWallet.isOpen kdewallet)" = "(true,)" ]

@@ -14,7 +14,19 @@ TIMEOUT=${SECRETGATE_TIMEOUT:-0}
 TAG=start-after-secretservice
 avisou=0
 
+# NameHasOwner nao ATIVA o servico; 'gdbus call --dest org.kde.kwalletd6' ativa.
+# Subir o kwalletd6 por D-Bus antes do pam_kwallet impede a entrega da chave e a
+# carteira nunca abre (incidente de 2026-07-30). So' consultamos a carteira
+# quando o daemon ja' esta' de pe' por conta propria.
+kwalletd_de_pe() {
+  [[ "$(gdbus call --session --dest org.freedesktop.DBus \
+        --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.kde.kwalletd6 \
+        2>/dev/null)" == "(true,)" ]]
+}
+
 aberta() {
+  kwalletd_de_pe || return 1
   [[ "$(gdbus call --session --dest org.kde.kwalletd6 \
         --object-path /modules/kwalletd6 \
         --method org.kde.KWallet.isOpen "$WALLET" 2>/dev/null)" == "(true,)" ]]
