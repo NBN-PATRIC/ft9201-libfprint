@@ -5,10 +5,14 @@
 > dead end on this sensor; correlation over subtemplates **does** discriminate
 > identity (d′ = 3.28, complete separation) but has essentially **no tolerance to the
 > finger being rotated**, and neither denser enrolment, Gabor enhancement, nor a
-> larger scoring window recovers it. The middle sections overstate the approach and
-> the section after them overstates the failure — both are kept because the
-> measurements and the reasoning errors along the way are the useful part.
-> Jump to [the correction](#correction-it-discriminates-identity--it-does-not-tolerate-rotation).
+> larger scoring window recovers it — and then it turns out **rotation was never the
+> problem either**: synthetic rotation is recovered to 0.98, so the search works, and
+> what defeats a physically rotated finger is that a 3.2 × 4.1 mm window then sees a
+> different patch of skin. The real variable is enrolment coverage, and the case that
+> decides usability — natural, casual presentations rather than deliberately identical
+> or deliberately exaggerated ones — is **still unmeasured**. Sections are kept in the
+> order they happened because the reasoning errors are the useful part.
+> Jump to [the last section](#it-was-never-rotation-it-is-that-the-window-sees-a-different-patch).
 
 This document records why the NBIS/Bozorth3 path that libfprint gives image devices
 for free does not work on this sensor, what the vendor appears to do instead, and how
@@ -389,3 +393,56 @@ python3 area-test.py <dir> d1 45      # scoring window vs separability
 python3 gabor.py <dir> <out>          # ridge enhancement, then re-run the tests
 python3 fpn-test.py <dir> d1          # fixed-pattern removal and rotation range
 ```
+
+---
+
+# It was never rotation. It is that the window sees a different patch
+
+The section above concludes the missing piece is a rotation-invariant representation.
+Before building one — log-polar, Fourier-Mellin — the assumption was worth testing
+directly: rotate a sample **synthetically** and see whether the existing search
+recovers it. Same content, only the angle changes.
+
+| synthetic rotation | best NCC |
+|---|---|
+| 0° | 0.981 |
+| 5° | 0.984 |
+| 10° | 0.972 |
+| 15° | 0.981 |
+| 20° | 0.985 |
+| 30° | 0.981 |
+| 45° | 0.981 |
+| 60° | 0.798 |
+| 90° | 0.981 |
+
+*(the 60° dip is the valid-pixel mask clipping at that angle, not a search failure)*
+
+Against 0.472 for a physically rotated finger. **The rotation search already works.**
+Rotation invariance was never the missing piece, and a Fourier-Mellin or log-polar
+descriptor would have solved a problem this sensor does not have.
+
+What actually happens when the finger turns on a 3.2 × 4.1 mm window is that a
+*different patch of skin* comes into view — plus elastic deformation of the skin
+against the platen. Two views of different regions of one finger have no reason to
+correlate, which is the same fact that defeated mosaicking at the start of this
+document, arriving from the other direction.
+
+## What this changes about the diagnosis
+
+The problem is neither identity discrimination (d′ = 3.28) nor rotation (recovered
+to 0.98 synthetically). It is **coverage**: the enrolled set has to contain a view
+close to whatever the user actually presents.
+
+And the coverage test earlier in this document — adding rotated views raises genuine
+and impostor together — was run on a deliberately adversarial set. The instruction
+for those captures was to exaggerate the angle, one touch straight, one tilted left,
+one tilted right, two extreme. In leave-one-out over seven views spanning 180°, the
+held-out probe never has a near neighbour by construction.
+
+That is not how the sensor gets used. Someone unlocking a machine puts the same
+finger down roughly the same way each time. So the measurement that actually decides
+whether this is usable has not been made yet: **natural, casual presentations** —
+neither deliberately identical nor deliberately rotated.
+
+Both existing sets are artificial extremes, and the honest position is that the
+practical case sits between them and is currently unmeasured.
