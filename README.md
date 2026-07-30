@@ -17,7 +17,7 @@ it independently. **No proprietary code, blobs or binaries are included or redis
 | Image capture through the driver | ✅ |
 | Minutiae extraction | ⚠️ 1–3 per frame, no match — see [`MATCHING.md`](MATCHING.md) |
 | **Enrollment completes** | ✅ template stored under `/var/lib/fprint/<user>/ft9201/` |
-| **Verification matches** | ⚠️ **not yet** — returns `verify-no-match`; tuning needed |
+| **Verification matches** | ❌ **no** — two matcher approaches measured and failed, see [`MATCHING.md`](MATCHING.md) |
 
 So: **this is not a finished driver, and matching is not a calibration problem.**
 Two approaches have been measured on this sensor and both fail: NBIS minutiae (at most 3
@@ -25,9 +25,9 @@ per frame, no match in 90 parameter combinations) and correlation over subtempla
 (d′ ≈ 0.2 against impostors captured on this same sensor — genuine and impostor scores are
 effectively one distribution). See [`MATCHING.md`](MATCHING.md).
 
-What *is* solid is the capture side.
-The protocol section, however, is complete and verified, and should be immediately useful to
-anyone stuck on this sensor.
+What *is* solid is the capture side: the protocol is complete and verified, image acquisition
+is good, and ridge structure is resolved at an 8–12 px period. That part should be immediately
+useful to anyone stuck on this sensor.
 
 Tested on: Kali Linux (rolling, kernel 6.17), machine with USB `2808:93a9` + `2808:6553`.
 
@@ -62,10 +62,12 @@ Full details, including the capture sequence and finger-presence polling, in
    `0x00` forever. Indistinguishable from a dead sensor.
 2. **Re-arm about once per second.** Detection goes quiet a few seconds after init — measured
    **1 transition in 4445 polls** without re-arming, **24** with it.
-3. **Enlarge before minutiae detection.** At the native 64×80, NBIS `mindtct` returns
-   *"No minutiae found"* on every frame, even with clearly defined ridges (σ ≈ 64, full dynamic
-   range). `fpi_image_resize (img, 3, 3)` → 192×240 makes enrollment complete. Same approach as
-   the `egis0570` / `elanspi` / `aes3k` drivers.
+3. **Enlarge before minutiae detection — but know what it costs.** At the native 64×80, NBIS
+   `mindtct` returns *"No minutiae found"* on every frame, even with clearly defined ridges
+   (σ ≈ 64, full dynamic range); `fpi_image_resize (img, 3, 3)` makes enrollment complete, as in
+   the `egis0570` / `elanspi` / `aes3k` drivers. The catch: the measured ridge period here is
+   8–12 px, already what NBIS expects natively, so 3× pushes it to ~30 px and detection degrades
+   on anything larger than a single frame. The real problem is image *size*, not resolution.
 
 ## Layout
 
@@ -108,9 +110,10 @@ go through `93a9`.
 
 ## Help wanted: matching
 
-Enrollment completes but verification returns `verify-no-match`. This has now been measured
-rather than guessed — see [`tuning/`](tuning/), which runs libfprint's exact pipeline (pixman
-resize → NBIS `get_minutiae` → `bozorth_to_gallery`) offline over captured frames.
+Enrollment completes but verification returns `verify-no-match`, and this is now measured rather
+than guessed — see [`MATCHING.md`](MATCHING.md) for the full account and [`tuning/`](tuning/)
+for the harnesses, which run libfprint's exact pipeline (pixman resize → NBIS `get_minutiae` →
+`bozorth_to_gallery`) offline over captured frames.
 
 **Result of a 90-combination sweep** (5 enlargement factors × 6 pre-processing variants × 3
 `ppmm` values): **1–3 minutiae per frame in every single combination, and no pair ever scored
@@ -130,13 +133,21 @@ Directions that look promising, given the data:
    but the extra minutiae are seam artifacts that do not match between independent composites.
    The cause is now isolated to the alignment metric, which lands up to 66 px off.
    Full measurements and the remaining work in [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
-2. **A non-minutiae matcher** — the vendor driver works on these same frames, which suggests
-   correlation/pattern matching rather than NBIS-style minutiae.
-3. **Ridge-level enhancement** (Gabor along local orientation) instead of global contrast ops.
-4. Sweeping `LFSPARMS` beyond `remove_perimeter_pts`.
+2. **A non-minutiae matcher** — the vendor library works on these same frames, and its strings
+   show it keeps multiple subtemplates per finger. Implemented as normalised cross-correlation
+   over subtemplates with a rotation search, and **measured to fail**: against impostors captured
+   on the same sensor, genuine and impostor scores form effectively one distribution
+   (d′ ≈ 0.2). Removing fixed-pattern noise and widening the rotation search to ±90° do not
+   rescue it. See [`MATCHING.md`](MATCHING.md).
+3. **Match on chip** — the vendor library exposes a `focaltech:moc` driver alongside
+   `focaltech:algorithm`. If this chip can match on-chip, a host-side matcher is the wrong thing
+   to build and the driver only needs the command protocol, as `elanmoc` does upstream. Untested;
+   currently the most promising direction.
+4. **Ridge-level enhancement** (Gabor along local orientation) instead of global contrast ops.
 
 Measured and flat, so probably not worth repeating: plain enlargement, global
-contrast/equalisation, polarity inversion, `ppmm` tweaks.
+contrast/equalisation, polarity inversion, `ppmm` tweaks, and normalised cross-correlation on
+band-passed intensity.
 
 ## Related work
 
