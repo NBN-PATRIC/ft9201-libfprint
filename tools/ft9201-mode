@@ -4,7 +4,12 @@
 #
 #   ft9201-mode status     mostra qual esta' ativa e se a autenticacao responde
 #   ft9201-mode dev        sobe um fprintd temporario com a build de dev
+#   ft9201-mode free       nenhum fprintd: libera o USB para acesso direto
 #   ft9201-mode system     mata o de dev e devolve o do sistema (idempotente)
+#
+# 'free' e' o modo para as ferramentas que falam com o sensor direto por libusb
+# (captura, sniff de protocolo). Nao confundir com 'dev': aquele SOBE um fprintd,
+# que por sua vez reivindica o device e bloqueia o acesso direto.
 #
 # Por que isso e' preciso: enquanto o matcher aberto esta' em desenvolvimento,
 # quem autentica o sudo e' a libfprint do sistema. Um experimento que pare o
@@ -78,6 +83,11 @@ cmd_status() {
 cmd_system() {
   need_root system
   if stop_dev; then echo "[i] fprintd de dev encerrado"; fi
+  # 'free' mascara o fprintd; sem desmascarar aqui a digital nunca mais volta.
+  if systemctl is-enabled fprintd 2>/dev/null | grep -q masked; then
+    systemctl unmask fprintd >/dev/null 2>&1
+    echo "[i] fprintd desmascarado"
+  fi
   # garante que nenhum fprintd orfao segure o device
   systemctl stop fprintd 2>/dev/null
   sleep 1
@@ -114,9 +124,26 @@ cmd_dev() {
   fi
 }
 
+cmd_free() {
+  need_root free
+  stop_dev >/dev/null && echo "[i] fprintd de dev encerrado"
+  systemctl stop fprintd 2>/dev/null
+  # o fprintd e' ativado por D-Bus: mascarar evita que algo o acorde no meio
+  # de uma captura e roube o device.
+  systemctl mask fprintd >/dev/null 2>&1
+  sleep 1
+  if pgrep -x fprintd >/dev/null 2>&1; then
+    echo "[!] ainda ha' um fprintd de pe'; o acesso direto pode falhar" >&2
+  else
+    echo "[ok] sensor livre para acesso direto por libusb"
+  fi
+  echo "     LEMBRE: 'sudo $0 system' devolve a autenticacao normal."
+}
+
 case "${1:-status}" in
   status) cmd_status ;;
   dev)    cmd_dev ;;
+  free)   cmd_free ;;
   system) cmd_system ;;
-  *) echo "uso: $0 {status|dev|system}" >&2; exit 2 ;;
+  *) echo "uso: $0 {status|dev|free|system}" >&2; exit 2 ;;
 esac
