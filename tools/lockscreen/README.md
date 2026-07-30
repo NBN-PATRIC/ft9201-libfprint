@@ -96,3 +96,26 @@ systemctl --user enable --now wake-screen-on-unlock.service
 
 X11 only (`xset`); on Wayland KWin handles the wake itself and the watcher is
 harmlessly useless.
+
+## 6. Gating Secret Service consumers at autostart
+
+Consequence of §3 on an autologin machine: the wallet is closed until the first
+password unlock, so anything autostarted before that sees no Secret Service.
+Electron/Chromium apps check `isEncryptionAvailable` **once, at startup** — start
+one too early and it silently falls back to plaintext storage for the rest of its
+run, and its session does not persist.
+
+`start-after-secretservice.sh` wraps such an app in its `.desktop` Exec line and
+waits for `org.kde.KWallet.isOpen` before `exec`-ing it.
+
+It waits **indefinitely** by default, and that default matters. An earlier version
+gave up after 300 s and launched anyway, which defeats the purpose in the most
+likely case: power on the machine and walk away. Come back half an hour later and
+the app has long been running degraded, with nothing on screen to say so. Waiting
+forever is strictly better — the app simply does not run, a notification explains
+why, and unlocking the wallet starts it. `SECRETGATE_TIMEOUT=<seconds>` restores
+the old give-up behaviour if you want it.
+
+Note that apps launched by hand need no gate: by definition you launched them
+after unlocking. And Chromium started with `--password-store=basic` does not use
+the wallet at all.
