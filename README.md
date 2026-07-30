@@ -19,11 +19,14 @@ it independently. **No proprietary code, blobs or binaries are included or redis
 | **Enrollment completes** | ✅ template stored under `/var/lib/fprint/<user>/ft9201/` |
 | **Verification matches** | ❌ **no** — two matcher approaches measured and failed, see [`MATCHING.md`](MATCHING.md) |
 
-So: **this is not a finished driver, and matching is not a calibration problem.**
-Two approaches have been measured on this sensor and both fail: NBIS minutiae (at most 3
-per frame, no match in 90 parameter combinations) and correlation over subtemplates
-(d′ ≈ 0.2 against impostors captured on this same sensor — genuine and impostor scores are
-effectively one distribution). See [`MATCHING.md`](MATCHING.md).
+So: **this is not a finished driver, and matching is not a calibration problem.** NBIS
+minutiae are a dead end here — at most 3 per frame, no match in 90 parameter combinations.
+Correlation over subtemplates does better than that: against impostors captured on this same
+sensor it separates *perfectly* (d′ = 3.28) **when the finger is placed the same way as at
+enrolment**, and collapses into the impostor range as soon as it is rotated. Denser enrolment,
+Gabor ridge enhancement and a larger scoring window were each measured and none recovers it.
+The missing piece is a rotation-invariant representation. Full account in
+[`MATCHING.md`](MATCHING.md).
 
 What *is* solid is the capture side: the protocol is complete and verified, image acquisition
 is good, and ridge structure is resolved at an 8–12 px period. That part should be immediately
@@ -135,10 +138,13 @@ Directions that look promising, given the data:
    Full measurements and the remaining work in [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
 2. **A non-minutiae matcher** — the vendor library works on these same frames, and its strings
    show it keeps multiple subtemplates per finger. Implemented as normalised cross-correlation
-   over subtemplates with a rotation search, and **measured to fail**: against impostors captured
-   on the same sensor, genuine and impostor scores form effectively one distribution
-   (d′ ≈ 0.2). Removing fixed-pattern noise and widening the rotation search to ±90° do not
-   rescue it. See [`MATCHING.md`](MATCHING.md).
+   over subtemplates with a rotation search. It discriminates identity outright (d′ = 3.28,
+   complete separation against same-sensor impostors) **for a finger placed as it was at
+   enrolment**, and drops into the impostor range once rotated — roughly 25° between enrolled
+   views is already too wide a gap. Fixed-pattern removal, a ±90° rotation search, denser
+   enrolment, Gabor enhancement and larger scoring windows were each measured; none recovers it.
+   What is missing is rotation invariance in the representation itself.
+   See [`MATCHING.md`](MATCHING.md).
 3. **Match on chip** — the vendor library exposes a `focaltech:moc` driver alongside
    `focaltech:algorithm`. If this chip can match on-chip, a host-side matcher is the wrong thing
    to build and the driver only needs the command protocol, as `elanmoc` does upstream. Untested;

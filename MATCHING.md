@@ -1,13 +1,14 @@
 # Matching on the FT9201: why not minutiae, and what to do instead
 
-> **Read the last section first.** This document was written as the correlation
-> matcher was designed and measured, and its middle sections conclude that the
-> approach works. It does not. Impostor data captured on **this** sensor — the
-> measurement those same sections kept flagging as the one that mattered — shows
-> genuine and impostor scores are effectively the same distribution (d′ ≈ 0.2). The
-> sections below are kept in order because the reasoning and the negative results
-> along the way are the useful part; the operating point they arrive at is not.
-> Jump to [Same-sensor impostors](#same-sensor-impostors-the-approach-does-not-work).
+> **Read the last section first.** This document is written in the order the work
+> happened, and it changes its mind twice. Short version: minutiae extraction is a
+> dead end on this sensor; correlation over subtemplates **does** discriminate
+> identity (d′ = 3.28, complete separation) but has essentially **no tolerance to the
+> finger being rotated**, and neither denser enrolment, Gabor enhancement, nor a
+> larger scoring window recovers it. The middle sections overstate the approach and
+> the section after them overstates the failure — both are kept because the
+> measurements and the reasoning errors along the way are the useful part.
+> Jump to [the correction](#correction-it-discriminates-identity--it-does-not-tolerate-rotation).
 
 This document records why the NBIS/Bozorth3 path that libfprint gives image devices
 for free does not work on this sensor, what the vendor appears to do instead, and how
@@ -311,4 +312,80 @@ resolved at an 8–12 px period.
 python3 ft9201-capture.py <dir> <label> <presses>   # touch-event driven capture
 python3 analisar-sessao.py <dir> d1                 # per-sample verdict and cause
 python3 fpn-test.py <dir> d1                        # fixed-pattern and rotation tests
+```
+
+---
+
+# Correction: it discriminates identity — it does not tolerate rotation
+
+The section above concluded the correlation approach fails outright. That conclusion
+came from a **biased test of my own construction** and is wrong in an important way.
+
+The enrolment used the five fixed-position samples, which left only the seven
+*deliberately rotated* samples as genuine probes — while impostors came from any
+presentation. Genuine was being scored on the hard case and impostor on the easy one.
+
+Running the fair test — leave-one-out **within** the fixed-position samples:
+
+| genuine probes | mean | min | d′ vs impostor |
+|---|---|---|---|
+| **same position** | **0.985** | 0.966 | **+3.28** |
+| rotated | 0.472 | 0.152 | +0.14 |
+| *(impostor, for reference)* | 0.437 | — max 0.777 | — |
+
+Worst same-position genuine 0.966 against best impostor 0.777: **complete separation
+with a margin of 0.19.** Correlation discriminates identity on this sensor. What it
+does not do is survive the finger being placed differently.
+
+## The real failure is rotation tolerance, and more views do not fix it
+
+If sparse enrolment were the problem, adding the rotated samples to the enrolment
+should rescue the rotated probes. Tested, leave-one-out over the rotated set so the
+probe is never enrolled:
+
+| enrolment | views | genuine | impostor | d′ | separates |
+|---|---|---|---|---|---|
+| fixed position only | 5 | 0.472 | 0.437 | 0.14 | no |
+| fixed + rotated | 12 | 0.696 | 0.638 | 0.47 | no |
+| rotated only | 7 | 0.629 | 0.614 | 0.10 | no |
+
+Adding views raises genuine — and raises impostor almost as much, because best-of-N
+gives an impostor more chances too. The seven rotated views span 180° with roughly
+25° between neighbours, and correlation cannot bridge even that gap: a 25°-rotated
+view of the same finger scores in the same range as a different finger.
+
+## What this means
+
+The diagnosis is much narrower than "correlation does not work":
+
+- **Identity discrimination: solved.** d′ = 3.28, complete separation, when the
+  presentation is close to an enrolled one.
+- **Rotation invariance: absent.** The explicit rotation search over the probe does
+  not recover it. Rotating a 1.8 mm window resamples it, and what little distinctive
+  structure it holds does not survive.
+- **Coverage does not substitute for invariance.** Denser enrolment inflates both
+  distributions together.
+
+So the missing piece is a rotation-invariant representation, not more data, not more
+enrolment views, and not a better threshold. That also reframes the vendor's 13
+enrolment stages: they are certainly covering presentation space, but coverage alone
+is measurably not enough, so their algorithm must carry invariance of its own.
+
+Two things that did **not** help, both worth recording so they are not retried:
+
+- **Gabor ridge enhancement** (orientation field → oriented filter bank, coherence
+  0.77–0.87, so the field is confident). d′ stays at 0.19–0.30 and goes *negative* in
+  two variants. Enhancement makes every fingerprint look like clean parallel ridges,
+  which at this scale makes different fingers look more alike, not less.
+- **A larger scoring window.** Sweeping 24→48 px (1.5→6.0 mm²): d′ goes
+  0.04 → 0.09 → 0.14 → −0.16 → −0.17. It does not rise with area, and beyond 36 px it
+  falls, because a larger window leaves less room to slide and genuine matches lose
+  their alignment before impostors do. Area is not the bottleneck.
+
+## Reproducing
+
+```bash
+python3 area-test.py <dir> d1 45      # scoring window vs separability
+python3 gabor.py <dir> <out>          # ridge enhancement, then re-run the tests
+python3 fpn-test.py <dir> d1          # fixed-pattern removal and rotation range
 ```
