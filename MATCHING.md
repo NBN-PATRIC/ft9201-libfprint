@@ -1,9 +1,18 @@
 # Matching on the FT9201: why not minutiae, and what to do instead
 
+> **Read the last section first.** This document was written as the correlation
+> matcher was designed and measured, and its middle sections conclude that the
+> approach works. It does not. Impostor data captured on **this** sensor — the
+> measurement those same sections kept flagging as the one that mattered — shows
+> genuine and impostor scores are effectively the same distribution (d′ ≈ 0.2). The
+> sections below are kept in order because the reasoning and the negative results
+> along the way are the useful part; the operating point they arrive at is not.
+> Jump to [Same-sensor impostors](#same-sensor-impostors-the-approach-does-not-work).
+
 This document records why the NBIS/Bozorth3 path that libfprint gives image devices
-for free does not work on this sensor, what the vendor appears to do instead, and an
-offline measurement showing that the alternative is viable. It is the design basis
-for the matcher work; the measurements behind the negative half are in
+for free does not work on this sensor, what the vendor appears to do instead, and how
+a correlation-based alternative was designed, implemented, and ultimately measured to
+fail. The measurements behind the minutiae half are in
 [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md).
 
 ## The ceiling on minutiae, measured
@@ -218,3 +227,88 @@ angle rather than sweeping blind.
 Open questions: the operating threshold (blocked on same-sensor impostor data), N
 and the quality gate, and whether `focaltech:moc` means this chip can match on-chip
 — which would be a better path than any host-side matcher.
+
+---
+
+# Same-sensor impostors: the approach does not work
+
+> Added after collecting impostor data from **this** sensor, which the sections
+> above repeatedly flagged as the measurement that mattered. It was, and it
+> overturns their conclusion. Everything above stands as recorded work; the
+> operating point it proposes does not survive.
+
+Thirty samples were captured on the sensor itself: 12 from one finger (5 in a fixed
+position, 7 deliberately rotated) and 18 from two other fingers.
+
+## The impostor scores roughly double
+
+| | impostors from other sensors | **impostors from this sensor** |
+|---|---|---|
+| mean | 0.171 | **0.375** |
+| max | 0.463 | **0.744** |
+
+At the 0.50 threshold the earlier data supported, the real numbers are **64% genuine
+accepted and 33% of impostors accepted** — 6 false accepts out of 18. Reaching zero
+false accepts requires 0.75, which passes only 36% of genuine attempts.
+
+## It is not a tuning problem
+
+Two candidate fixes were tested separately so their effects could not be confused —
+removing the sensor's fixed-pattern noise (estimated as the per-pixel median across
+all fingers, which correlates 0.30 with any single frame), and widening the rotation
+search from ±45° to ±90°, since the measured orientation spread across presses
+reaches 90°.
+
+Separability is reported as d′, which compares the two distributions without
+reference to any threshold:
+
+| variant | d′ | genuine mean | impostor mean |
+|---|---|---|---|
+| baseline | 0.14 | 0.472 | 0.437 |
+| rotation ±90° | 0.21 | 0.669 | 0.636 |
+| fixed pattern removed | 0.24 | 0.512 | 0.461 |
+| both | **0.29** | 0.671 | 0.630 |
+
+A usable biometric needs d′ well above 1.5. At 0.2 the genuine and impostor
+distributions are, for practical purposes, the same distribution. Widening the
+rotation search raises both means together — it buys no separation, only inflation.
+Fixed-pattern removal helps measurably but by a factor nowhere near enough.
+
+Any "best threshold with zero false accepts" figure from these runs is an artifact of
+small samples: with 7 genuine probes, a threshold landing above the highest impostor
+is luck rather than signal. d′ is the honest summary.
+
+## Why
+
+Two fingers read by the same sensor share fixed-pattern noise, illumination profile,
+and ridge-texture statistics. The scoring window is 36×36 px — **1.8 × 1.8 mm**. At
+that size there is not enough distinctive structure to separate *identity* from
+*sensor signature*, and normalised cross-correlation on band-passed intensity has no
+mechanism to tell them apart.
+
+## Where this leaves the project
+
+Two approaches have now been measured on this sensor and both fail:
+
+1. **NBIS minutiae** — at best 3 minutiae per frame, no match in any of 90 parameter
+   combinations.
+2. **Correlation over subtemplates** — d′ ≈ 0.2 against same-sensor impostors.
+
+The vendor's library does work on the same hardware, so the problem is solvable; the
+techniques tried here are simply not the ones that solve it. Its string table points
+at a dedicated `focaltech:algorithm` component alongside `focaltech:moc`, and if this
+chip can match on-chip then the host-side matcher is the wrong thing to be building
+in the first place — the driver would only need the command protocol, as `elanmoc`
+does upstream.
+
+The capture side of this project is unaffected and remains sound: the protocol in
+`PROTOCOL.md` is verified, image acquisition is good, and ridge structure is
+resolved at an 8–12 px period.
+
+## Reproducing
+
+```bash
+python3 ft9201-capture.py <dir> <label> <presses>   # touch-event driven capture
+python3 analisar-sessao.py <dir> d1                 # per-sample verdict and cause
+python3 fpn-test.py <dir> d1                        # fixed-pattern and rotation tests
+```

@@ -15,11 +15,17 @@ it independently. **No proprietary code, blobs or binaries are included or redis
 | libfprint driver compiles cleanly (master 1.94.100) | ✅ |
 | Device recognised by `fprintd`, opens, detects finger | ✅ |
 | Image capture through the driver | ✅ |
-| Minutiae extraction | ⚠️ 1–3 per frame, and they do not correspond between captures — see [`tuning/MOSAICKING.md`](tuning/MOSAICKING.md) |
+| Minutiae extraction | ⚠️ 1–3 per frame, no match — see [`MATCHING.md`](MATCHING.md) |
 | **Enrollment completes** | ✅ template stored under `/var/lib/fprint/<user>/ft9201/` |
 | **Verification matches** | ⚠️ **not yet** — returns `verify-no-match`; tuning needed |
 
-So: **this is not a finished driver.** It captures and enrolls; matching still needs calibration.
+So: **this is not a finished driver, and matching is not a calibration problem.**
+Two approaches have been measured on this sensor and both fail: NBIS minutiae (at most 3
+per frame, no match in 90 parameter combinations) and correlation over subtemplates
+(d′ ≈ 0.2 against impostors captured on this same sensor — genuine and impostor scores are
+effectively one distribution). See [`MATCHING.md`](MATCHING.md).
+
+What *is* solid is the capture side.
 The protocol section, however, is complete and verified, and should be immediately useful to
 anyone stuck on this sensor.
 

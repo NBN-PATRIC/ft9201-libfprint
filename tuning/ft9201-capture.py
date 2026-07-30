@@ -41,8 +41,12 @@ MANIFEST  = "manifesto.csv"
 
 POLL          = 0.03      # ~33 Hz, o mesmo ritmo do driver
 REARM_EVERY   = 1.0       # a deteccao dorme sem isso
-RELEASE_POLLS = 5         # zeros seguidos que contam como retirada
-MAX_PER_PRESS = 8         # o resto de um toque longo e' quase-duplicata
+RELEASE_POLLS = 15        # zeros seguidos que contam como retirada
+# MEDIDO: o sensor entrega UMA imagem por toque, por projeto -- o fluxo do
+# fabricante tem um wait-for-lift logo apos a leitura, e nem re-armar dentro do
+# toque muda isso. O teto abaixo nunca e' atingido; fica so' de guarda.
+# Consequencia pratica: 1 amostra = 1 toque.
+MAX_PER_PRESS = 8
 MIN_STD       = 20.0      # abaixo disso o dedo nem encostou direito
 HARD_CAP      = 1.6       # multiplicador do tempo antes de desistir
 
@@ -115,7 +119,19 @@ def main():
     print("\033[1m" + "=" * 64 + "\033[0m")
     print()
 
+    # Continua de onde a sessao anterior parou. Sem isso, rodar de novo com o
+    # mesmo rotulo reinicia em p01 e sobrescreve o que ja' foi capturado --
+    # perdi 4 toques assim.
     press = 0
+    import glob as _g, re as _re
+    _ant = _g.glob(os.path.join(OUT, f"{LABEL}_p*_f*.pgm"))
+    for _f in _ant:
+        _m = _re.search(r"_p(\d+)_f", os.path.basename(_f))
+        if _m:
+            press = max(press, int(_m.group(1)))
+    press_base = press
+    if press:
+        print(f"  (ja' existem {press} toques de '{LABEL}'; continuando a partir do {press+1})\n")
     saved = 0
     t0 = time.time()
     last_rearm = 0.0
@@ -124,7 +140,7 @@ def main():
     burst = []
 
     try:
-        while press < N_PRESSES and time.time() - t0 < WINDOW * HARD_CAP:
+        while press < press_base + N_PRESSES:
             try:
                 p = dev.finger_present()
             except Exception:
@@ -148,7 +164,7 @@ def main():
                 burst = []
                 zeros = 0
                 state = "reading"
-                print(f"  \033[1mtoque {press}/{N_PRESSES}\033[0m  ", end="", flush=True)
+                print(f"  \033[1mtoque {press-press_base}/{N_PRESSES}\033[0m  ", end="", flush=True)
                 # cai direto na leitura, sem esperar nada
 
             if state == "reading":
@@ -171,6 +187,13 @@ def main():
                             if a.astype(float).std() >= MIN_STD:
                                 burst.append(img)
                                 print(".", end="", flush=True)
+                        # re-arma DENTRO da rajada: sem isso a presenca fica
+                        # zerada apos o reset do read_image e o toque parece ter
+                        # acabado depois do primeiro quadro.
+                        try:
+                            dev.read_status()
+                        except Exception:
+                            pass
                     else:
                         time.sleep(POLL)
                         continue
@@ -220,10 +243,10 @@ def main():
 
     el = time.time() - t0
     print()
-    print(f"  \033[1m{saved} amostras\033[0m de {press} toques em {el:.0f}s -> {OUT}/")
+    print(f"  \033[1m{saved} amostras\033[0m de {press-press_base} toques em {el:.0f}s -> {OUT}/")
     print(f"  manifesto: {os.path.join(OUT, MANIFEST)}")
-    if press < N_PRESSES:
-        print(f"  (faltaram {N_PRESSES - press} toques; rode de novo para completar,")
+    if press - press_base < N_PRESSES:
+        print(f"  (faltaram {N_PRESSES - (press-press_base)} toques; rode de novo para completar,")
         print("   os arquivos novos nao sobrescrevem os antigos se mudar o rotulo)")
     return 0
 
