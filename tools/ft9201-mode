@@ -20,7 +20,15 @@
 # LD_LIBRARY_PATH, num processo separado. Os dois nao se misturam.
 set -u
 
-DEV_LIB="${FT9201_DEV_LIB:-$HOME/build/libfprint/build/libfprint}"
+# Sob sudo o $HOME pode virar /root, e a build de dev sumiria em silencio.
+# Resolve pelo usuario que invocou, caindo para $HOME fora do sudo.
+_real_home() {
+  local u h
+  u="${SUDO_USER:-}"
+  [ -n "$u" ] && h="$(getent passwd "$u" | cut -d: -f6)" && [ -d "$h" ] && { echo "$h"; return; }
+  echo "$HOME"
+}
+DEV_LIB="${FT9201_DEV_LIB:-$(_real_home)/build/libfprint/build/libfprint}"
 FPRINTD="${FT9201_FPRINTD:-/usr/libexec/fprintd}"
 PIDFILE=/run/ft9201-dev-fprintd.pid
 LOG="${FT9201_DEV_LOG:-/tmp/ft9201-dev-fprintd.log}"
