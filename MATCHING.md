@@ -1,18 +1,17 @@
 # Matching on the FT9201: why not minutiae, and what to do instead
 
-> **Read the last section first.** This document is written in the order the work
-> happened, and it changes its mind twice. Short version: minutiae extraction is a
-> dead end on this sensor; correlation over subtemplates **does** discriminate
-> identity (d′ = 3.28, complete separation) but has essentially **no tolerance to the
-> finger being rotated**, and neither denser enrolment, Gabor enhancement, nor a
-> larger scoring window recovers it — and then it turns out **rotation was never the
-> problem either**: synthetic rotation is recovered to 0.98, so the search works, and
-> what defeats a physically rotated finger is that a 3.2 × 4.1 mm window then sees a
-> different patch of skin. The real variable is enrolment coverage, and the case that
-> decides usability — natural, casual presentations rather than deliberately identical
-> or deliberately exaggerated ones — is **still unmeasured**. Sections are kept in the
-> order they happened because the reasoning errors are the useful part.
-> Jump to [the last section](#it-was-never-rotation-it-is-that-the-window-sees-a-different-patch).
+> **Bottom line, measured:** neither matcher approach works on this sensor. NBIS
+> extracts at most 3 minutiae from a 64×80 frame and never matches. Correlation over
+> subtemplates separates perfectly (d′ = 3.28) only when the finger is placed almost
+> pixel-identically to enrolment — and in natural use, where casual placement already
+> spans the full rotation range, **d′ = 0.06**. Gabor enhancement, wider rotation
+> search, fixed-pattern removal, larger scoring windows and denser enrolment were each
+> measured and none of them change that. The vendor's library does authenticate on the
+> same hardware, so the gap is in the feature representation, not the sensor.
+>
+> The document is kept in the order the work happened, and it changes its mind three
+> times. The reasoning errors are the useful part — each one is a thing not worth
+> retrying. Jump to [the end](#the-real-use-measurement-and-the-end-of-this-line-of-work).
 
 This document records why the NBIS/Bozorth3 path that libfprint gives image devices
 for free does not work on this sensor, what the vendor appears to do instead, and how
@@ -446,3 +445,66 @@ neither deliberately identical nor deliberately rotated.
 
 Both existing sets are artificial extremes, and the honest position is that the
 practical case sits between them and is currently unmeasured.
+
+---
+
+# The real-use measurement, and the end of this line of work
+
+The previous section says the deciding measurement — natural presentation, neither
+deliberately repeated nor deliberately exaggerated — had not been made. It has now.
+
+Eleven touches with a single instruction: *press as if unlocking the machine.* No
+attempt to repeat the position, no exaggerated angles.
+
+The first thing the data shows is that the distinction the previous section drew was
+false. Measured ridge orientation across those eleven natural touches:
+
+```
+150°  105°  15°  75°  15°  15°  60°  165°  0°  0°  60°
+```
+
+That is essentially the same spread as the set captured with explicit instructions to
+exaggerate the angle. **On a 3.2 × 4.1 mm window, casual placement already covers the
+full rotation range.** The "adversarial" set was never adversarial; it was
+representative, and the "same position" set was the artificial one.
+
+Enrolling from natural touches and verifying with a held-out natural touch — the
+actual use case, leave-one-out:
+
+| enrolment | views | genuine | impostor | d′ | best TAR at 0% FAR |
+|---|---|---|---|---|---|
+| natural only | 11 | 0.687 | 0.680 | **0.06** | 0% |
+| natural + fixed position | 12 | 0.728 | 0.690 | 0.38 | 9% |
+
+Genuine mean 0.687 against impostor mean 0.680. There is no threshold that
+authenticates the right finger and rejects the wrong one.
+
+## Conclusion
+
+Correlation over subtemplates **cannot authenticate on this sensor**. The d′ = 3.28
+reported earlier is real but only reachable when the probe is nearly pixel-identical
+to an enrolled view, and the natural-use data shows that condition does not occur.
+
+The full sequence of measurements, so the negative result is not re-derived:
+
+| approach | result |
+|---|---|
+| NBIS minutiae, 90 parameter combinations | ≤3 minutiae/frame, never matches |
+| Multi-frame mosaicking | blocked on sub-degree rigid registration |
+| NCC over subtemplates, other-sensor impostors | d′ high — but the impostors were too easy |
+| NCC, same-sensor impostors, natural use | **d′ = 0.06** |
+| Fixed-pattern-noise removal | d′ 0.14 → 0.24 |
+| Rotation search widened to ±90° | raises both distributions equally |
+| Gabor ridge enhancement | d′ 0.19–0.30, negative in two variants |
+| Scoring window 24→48 px | d′ 0.04 → 0.14 → −0.17 |
+| Synthetic rotation control | recovered to 0.98 — the search was never the problem |
+
+The vendor's library does authenticate on this same hardware, so this is a limitation
+of the techniques applied here rather than of the sensor. Closing that gap means
+replicating a proprietary feature extractor, which is a research project and not a
+tuning exercise. Anyone picking this up should start there and not from correlation.
+
+**What this repository is good for**, unchanged by any of the above: the protocol is
+documented and verified, image acquisition works, ridge structure is resolved at an
+8–12 px period, and `tuning/` contains the harnesses and captured measurements to
+evaluate a new matcher without re-deriving any of this.

@@ -42,6 +42,7 @@ MANIFEST  = "manifesto.csv"
 POLL          = 0.03      # ~33 Hz, o mesmo ritmo do driver
 REARM_EVERY   = 1.0       # a deteccao dorme sem isso
 RELEASE_POLLS = 15        # zeros seguidos que contam como retirada
+STUCK_POLLS   = 120       # leituras seguidas sem quadro valido = sensor tomado
 # MEDIDO: o sensor entrega UMA imagem por toque, por projeto -- o fluxo do
 # fabricante tem um wait-for-lift logo apos a leitura, e nem re-armar dentro do
 # toque muda isso. O teto abaixo nunca e' atingido; fica so' de guarda.
@@ -136,6 +137,7 @@ def main():
     t0 = time.time()
     last_rearm = 0.0
     zeros = 0
+    vazios = 0
     state = "wait_touch"
     burst = []
 
@@ -177,6 +179,25 @@ def main():
                         continue
                 else:
                     zeros = 0
+                    vazios += 1
+                    if vazios > STUCK_POLLS:
+                        print("  \033[31mo sensor parou de responder — alguem tomou o "
+                              "device (fprintd?). reabrindo...\033[0m", flush=True)
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                        time.sleep(1.5)
+                        try:
+                            dev = FT9201()
+                            dev.read_status()
+                        except Exception as e:
+                            print(f"  \033[31mnao reabri: {e}\033[0m", flush=True)
+                            print("  rode:  sudo ft9201-mode free", flush=True)
+                            break
+                        press -= 1
+                        burst, vazios, state = [], 0, "wait_touch"
+                        continue
                     if len(burst) < MAX_PER_PRESS:
                         try:
                             img = dev.read_image()
@@ -186,6 +207,7 @@ def main():
                             a = np.frombuffer(img, np.uint8).reshape(IMG_H, IMG_W)
                             if a.astype(float).std() >= MIN_STD:
                                 burst.append(img)
+                                vazios = 0
                                 print(".", end="", flush=True)
                         # re-arma DENTRO da rajada: sem isso a presenca fica
                         # zerada apos o reset do read_image e o toque parece ter
